@@ -1,0 +1,82 @@
+---
+title: "Octo_monitoring_data"
+author: "Ronen"
+date: "2023-12-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r initiate-environment, message=FALSE, warning=FALSE, include=FALSE}
+
+library(tidyverse)
+library("ggplot2")
+library("knitr")
+library("gridExtra")
+library("ggpubr")
+library("data.table")
+library(dplyr)  # For data manipulation
+library(lubridate)  # For date handling
+library(extrafont)
+library("scales")
+library(car)
+```
+
+```{r customize plot style , warning=FALSE, include=FALSE}
+#font_import()
+
+theme_set(theme_minimal(base_size = 12))
+theme_update(
+  axis.title.x = element_text(margin = margin(12, 0, 0, 0), color = "black"),
+  axis.title.y = element_text(margin = margin(0, 12, 0, 0), color = "black"),
+  panel.grid.minor = element_blank(),
+  panel.border = element_rect(color = "grey45", fill = NA, linewidth = 1.5),
+  panel.spacing = unit(.9, "lines"),
+  strip.text = element_text(size = rel(1)),
+  plot.title = element_text(size = rel(1), face = "bold", hjust = .5),
+  axis.line = element_line(colour = "black"),
+        strip.text.x = element_text(size = 10, colour = "black"),
+        axis.text=element_text(color="black", size=10),
+  plot.title.position = "plot"
+)
+```
+
+# **Data summary**
+
+Summerize Monitoring data of 3 species #
+
+```{r load data and set it accordingly, paged.print=TRUE}
+#starting from data of SECREMP from 2013
+Height_data <- read.csv("~/Postdocing_NSU/Octocoral forests/Monitoring data/Me playing with monitoring data/SECREMP_OCTO_RawData_2013.csv")
+
+glimpse(Height_data)
+
+#format data 
+Height_data$Date <- format(as.Date(Height_data$Date,format = "%m/%d/%Y"))
+
+head(Height_data)
+View(Height_data)
+
+# Summary of colony heights (only the three species that interest me) in the different transects whle keeping the metadata 
+
+Sum_height <- Height_data %>%
+  filter(SPP_Code %in% c("PFLE","GVEN","PAME"))  %>%
+  group_by(SiteID,StationID, SPP_Code) %>% 
+  mutate(mean_height = mean(Height_cm), sd= sd(Height_cm) , n= n()) %>% 
+  select(-Height_cm) %>% 
+  distinct() %>% 
+  ungroup()
+
+head(Sum_height)
+
+#Lets get the density data
+density_dat <- Height_data <- read.csv("~/Postdocing_NSU/Octocoral forests/Monitoring data/Me playing with monitoring data/SECREMP_OCTO_Summaries_2013_Density.csv" ) 
+glimpse(density_dat)
+#density_dat$Date <- format(as.Date(density_dat$Date,format = "%m/%d/%Y"))
+
+view(density_dat)
+
+# next merge heights and density based on SitID and station ID data. before I will need the density to be long dat. 
+```
