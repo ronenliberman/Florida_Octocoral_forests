@@ -62,21 +62,93 @@ View(Height_data)
 # Summary of colony heights (only the three species that interest me) in the different transects whle keeping the metadata 
 
 Sum_height <- Height_data %>%
-  filter(SPP_Code %in% c("PFLE","GVEN","PAME"))  %>%
+  #filter(SPP_Code %in% c("PFLE","GVEN","PAME"))  %>%
   group_by(SiteID,StationID, SPP_Code) %>% 
-  mutate(mean_height = mean(Height_cm), sd= sd(Height_cm) , n= n()) %>% 
+  mutate(mean_height = mean(Height_cm), sd= sd(Height_cm) ,biomass=sum(Height_cm), n= n()) %>% 
   select(-Height_cm) %>% 
   distinct() %>% 
   ungroup()
 
 head(Sum_height)
-
-#Lets get the density data
-density_dat <- Height_data <- read.csv("~/Postdocing_NSU/Octocoral forests/Monitoring data/Me playing with monitoring data/SECREMP_OCTO_Summaries_2013_Density.csv" ) 
+view(Sum_height)
+#Get the density data
+density_dat <-  read.csv("~/Postdocing_NSU/Octocoral forests/Monitoring data/Me playing with monitoring data/SECREMP_OCTO_Summaries_2013_Density.csv" ) 
 glimpse(density_dat)
 #density_dat$Date <- format(as.Date(density_dat$Date,format = "%m/%d/%Y"))
 
 view(density_dat)
+#I need to create a dataframe with those two df combined. for that we need to make density dat a long df
 
-# next merge heights and density based on SitID and station ID data. before I will need the density to be long dat. 
+#step one: have similar names
+Sum_height <- Sum_height %>% 
+  mutate(sciName = dplyr::recode(sciName,
+                          'Pseudopterogorgia americana' = 'Antillogorgia_americana',
+                          "Eunicea flexuosa" = "Eunicea_flexuosa", 
+                          "Gorgonia ventalina" = "Gorgonia_ventalina","Eunicea calyculata"= "Eunicea calyculata", "Pseudoplexaura porosa"="Pseudoplexaura porosa", "Pseudopterogorgia bipinnata" = 'Antillogorgia_americana bipinnata'))
+
+#step 2: make long 
+ density_long_dat <-  density_dat %>% pivot_longer(cols=c('Gorgonia_ventalina', 'Antillogorgia_americana', 'Eunicea_flexuosa' ,'Total_Octocorals'),
+                    names_to='sciName',
+                    values_to='density')
+
+#step 3: combine 
+ combined <- left_join(density_long_dat, Sum_height,by = c("Year", "Subregion" ,"Habitat" ,  "SiteID" ,   "Site_name" ,"StationID","sciName" ) )
+                                                          
+combined_dat <- combined[,-10]
+
+view(combined)
 ```
+I can work in a species level and in a proxy for the population level by using those 3 species. Lets keep all the data I can for the population level. Here I will work with all species I can. 
+
+```{r}
+pop.dat <- left_join(Sum_height,density_dat, by = c("Year", "Subregion" ,"Habitat" ,  "SiteID" ,   "Site_name" ,"StationID") )
+glimpse(pop.dat)
+pop.dat <- pop.dat %>% 
+select(-c(14:17)) %>% 
+  rename(oct.density=14)
+
+#Now in pop dat I have the hights, biomass and density and of each species in each transect. 
+
+```
+
+Data wranling , check what is interesting, what is the unit of sampling etc. 
+```{r}
+
+#Can I check trends per site? How many sites I actually have? 
+combined %>% 
+  group_by(Subregion) %>% 
+  tally()
+# 4 regions 
+combined %>% 
+  group_by(Habitat) %>% 
+  tally()
+
+# 4 Habitats 
+
+combined %>% 
+  group_by(Subregion, Habitat, Site_name) %>% 
+  tally()
+# not all regions and have all habitats. 
+
+#Thus,
+#I think I should start from looking at the sub region level, and represent the habitat too.
+
+# How can I show if there relationship between density and colony height? 
+
+#Maybe a good start will be a see how density of each species and the total changes over sampling times? 
+
+#summerize density 
+
+
+
+#plot - Thus would be later compared per year, so year should be my x axis 
+mycolo <- c('#d7191c','#252525', '#006d2c','#08519c' )
+
+P_density <- ggplot(combined, aes(x=Year, y= density, color=sciName  ))+
+geom_point()+
+  scale_color_manual(values = mycolo)+
+  facet_grid(.~Subregion)
+
+P_density
+```
+
