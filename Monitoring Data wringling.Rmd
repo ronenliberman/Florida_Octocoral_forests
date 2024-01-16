@@ -45,12 +45,14 @@ theme_update(
 
 # **Data summary**
 
-Summerize Monitoring data of 3 species #
+Summerize Monitoring data 
 
 ```{r load data and set it accordingly, paged.print=TRUE}
 #starting from data of SECREMP from 2013
-Height_data <- read.csv("~/Postdocing_NSU/Octocoral forests/Monitoring data/Me playing with monitoring data/SECREMP_OCTO_RawData_2013.csv")
+#Height_data <- read.csv("~/Postdocing_NSU/Octocoral forests/Monitoring data/Me playing with monitoring data/SECREMP_OCTO_RawData_2013.csv")
 
+#All data
+Height_data <- read.csv("~/Postdocing_NSU/Octocoral forests/Monitoring data/SECREMP_CSV_Files/SECREMP_OCTO_RawData_2012-2022.csv")
 glimpse(Height_data)
 
 #format data 
@@ -84,8 +86,8 @@ Sum_height <- Sum_height %>%
   mutate(sciName = dplyr::recode(sciName,
                           'Pseudopterogorgia americana' = 'Antillogorgia_americana',
                           "Eunicea flexuosa" = "Eunicea_flexuosa", 
-                          "Gorgonia ventalina" = "Gorgonia_ventalina","Eunicea calyculata"= "Eunicea calyculata", "Pseudoplexaura porosa"="Pseudoplexaura porosa", "Pseudopterogorgia bipinnata" = 'Antillogorgia_americana bipinnata'))
-
+                          "Gorgonia ventalina" = "Gorgonia_ventalina","Eunicea calyculata"= "Eunicea calyculata", "Pseudoplexaura porosa"="Pseudoplexaura porosa", "Pseudopterogorgia bipinnata" = 'Antillogorgia_bipinnata'))
+view(Sum_height)
 #step 2: make long 
  density_long_dat <-  density_dat %>% pivot_longer(cols=c('Gorgonia_ventalina', 'Antillogorgia_americana', 'Eunicea_flexuosa' ,'Total_Octocorals'),
                     names_to='sciName',
@@ -98,7 +100,10 @@ combined_dat <- combined[,-10]
 
 view(combined)
 ```
-I can work in a species level and in a proxy for the population level by using those 3 species. Lets keep all the data I can for the population level. Here I will work with all species I can. 
+With this data I can examine the species level or the population level.
+For the species by using those 3 species. Lets keep all the data I can for the population level. This is truely a proxy for the pop. becuase I dont have all species, right? but this is at least something that can tell us where this is going..  
+
+Here I will work with all species I can. 
 
 ```{r}
 pop.dat <- left_join(Sum_height,density_dat, by = c("Year", "Subregion" ,"Habitat" ,  "SiteID" ,   "Site_name" ,"StationID") )
@@ -111,7 +116,56 @@ select(-c(14:17)) %>%
 
 ```
 
-Data wranling , check what is interesting, what is the unit of sampling etc. 
+lets plot it 
+```{r}
+
+#Density will be x = years , here only 2013. y is colonies / m sq-2
+
+#biomass will be x = years , (here only 2013). y is mean of biomass / cm2 
+# Summarize data
+biomass_means <- pop.dat %>% 
+  group_by(Year,sciName, Subregion) %>%
+  summarize(mean_biomass = mean(biomass), sd = sd(biomass),se = sd / sqrt(n()), n=n() )
+#view(biomass_means)
+total_biomass <- pop.dat %>% 
+  group_by(Year, Subregion) %>%
+  summarize(total_biomass = sum(biomass))
+
+#add also pooled data in each subregion. 
+# Rename column in total_biomass
+total_biomass <- total_biomass %>%
+  rename(mean_biomass = total_biomass)
+
+# Bind rows 
+biomass_all <- bind_rows(biomass_means, total_biomass)
+
+# Fill NA and replace with "pooled taxa"
+biomass_all <- biomass_all %>%
+  fill(everything()) %>%
+  mutate(sciName = replace(sciName, is.na(sciName), "pooled taxa"))
+
+# View refined dataframe
+head(biomass_all)
+
+# Plot with facet wrap for both sciName and Subregion
+p_biomass <- ggplot(biomass_all, aes(x = Year, y = mean_biomass, color = sciName)) +
+  geom_point() + 
+  geom_errorbar(aes(ymin = mean_biomass - se, 
+                                   ymax = mean_biomass + se)) +
+  facet_wrap(~sciName + Subregion) +
+  labs(x = "Subregion",
+       y = "Biomass proxy cm2",
+       title = "Mean Biomass by Species and Subregion")
+
+p_biomass
+
+```
+
+
+
+
+
+More into Data wranling , check what is interesting, what is the unit of sampling etc. 
 ```{r}
 
 #Can I check trends per site? How many sites I actually have? 
