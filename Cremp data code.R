@@ -9,9 +9,12 @@ glimpse(Height_data)
 Height_data$Date <- format(as.Date(Height_data$Date,format = "%m/%d/%Y"))
 
 head(Height_data)
-View(Height_data)
+#View(Height_data)
 
-# Summary of colony heights (only the three species that interest me) in the different transects whle keeping the metadata 
+# Summary of colony heights in the different transects while keeping the metadata.
+# Biomass is calculated for each species in each station by sum of the heights in each station, 
+# n is the number of observation of colonies from this species, so basically if a species is more common I expeced highr biomass (doh). 
+# I keep the sampling unit by calculating per sttion , unit of sample. 
 
 Sum_height <- Height_data %>%
   #filter(SPP_Code %in% c("PFLE","GVEN","PAME"))  %>%
@@ -27,9 +30,8 @@ Sum_height <- Height_data %>%
   ungroup()
 
 head(Sum_height)
-view(Sum_height)
+#view(Sum_height)
 unique(Sum_height$sciName)
-
 #Get the density data
 #2013 only
 #density_dat <-  read.csv("~/Postdocing_NSU/Octocoral forests/Monitoring data/Me playing with monitoring data/SECREMP_OCTO_Summaries_2013_Density.csv" ) 
@@ -38,7 +40,7 @@ unique(Sum_height$sciName)
 density_dat <-  read.csv("~/Postdocing_NSU/Octocoral forests/Monitoring data/CREMP_CSV_Files/CREMP_OCTO_Summaries_2011-2022_Density.csv" ) 
 
 glimpse(density_dat)
-view(density_dat)
+#view(density_dat)
 #Here I will work with all species I can.
 
 pop.dat <- left_join(Sum_height,density_dat, by = c("Year", "Subregion" ,"Habitat" ,  "SiteID" ,   "Site_name" ,"StationID") )
@@ -87,7 +89,7 @@ biomass_means <- pop.dat %>%
   group_by(Year,Subregion,sciName) %>%
   summarize(mean_biomass = mean(biomass), sd = sd(biomass),se = sd / sqrt(n()), n=n() ) %>% 
   ungroup()
-#view(biomass_means)
+view(biomass_means)
 
 #calculating the total biomass of all the species heights in each location 
 # - this is the pooled data using 5 species
@@ -135,28 +137,51 @@ p_biomass.pooled<-
   scale_x_continuous(breaks=seq(2012,2022,2))+
   facet_wrap(~Subregion) +
   labs(x = "Subregion",
-       y = "Biomass proxy",title = "Pooled Taxa Biomass (of 5 species) by Subregion in Florida keys using CREMP data")
-p_biomass.pooled
+       y = "Biomass proxy",title = "Pooled Taxa Biomass (of 5 species) by Subregion in Florida keys using CREMP data")+
+  geom_vline(xintercept = 2017, color = "gray75",alpha=0.5, linewidth = 2)  +theme(plot.title = element_text(size = 12))
 
+p_biomass.pooled
  # Plot for each species
 #filter(sciName!='Antillogorgia_bipinnata')  # optional to remove species from this analysis
 indv_species_biomass<-  ggplot()+
   geom_jitter(data=pop.dat, aes(x=Year, y = biomass), alpha=0.4)+
   geom_line(data=biomass.species, aes(x = Year, y = mean_biomass, color = sciName ), linewidth = 2  )+
   scale_x_continuous(breaks=seq(2011,2022,2))+
-  facet_wrap(~sciName + Subregion, nrow=5) +labs(x = "Year",
+  facet_wrap(~sciName + Subregion, nrow=5, scales = "free_y") +labs(x = "Year",
                                          y = "Biomass proxy cm2",
                                          title = "Biomass of octocorals by subregion in Florida KEYS")+
   guides(fill = guide_legend()) +
   theme(legend.direction = "horizontal",strip.background = element_blank(),
         legend.position = "bottom",
         legend.title = element_blank(),
-        legend.text = element_text(color = "black", size = 10))
+        legend.text = element_text(color = "black", size = 10),plot.title = element_text(size = 12))
 indv_species_biomass
 
-ggsave(filename = "Biomass_CREMP_pooled species.png", plot = p_biomass.pooled,  width =30 , height = 25,dpi=600,  units = "cm")
+unique(pop.dat$sciName)
 
-ggsave(filename = "Biomass_CREMP_indv_species.png", plot = indv_species_biomass,  width =25 , height =35,dpi=600,  units = "cm")
+#adding unique y axis
+#install.packages("remotes")
+#remotes::install_github("teunbrand/ggh4x")
+library(ggh4x)
+
+indv_species_biomass <- indv_species_biomass +
+  facetted_pos_scales(
+    y = list(
+      sciName == "Antillogorgia_americana" ~ scale_y_continuous(limits = c(0,4000), breaks = c(0,1000,2500,4000)),
+      sciName == "Pseudoplexaura porosa" ~ scale_y_continuous(limits = c(0,1000), breaks = c(0,500,1000)),
+      sciName == "Eunicea_flexuosa" ~ scale_y_continuous(limits = c(0,1000), breaks = c(0,500,1000)),
+      sciName == "Gorgonia_ventalina" ~ scale_y_continuous(limits = c(0,4000), breaks = c(0,1000,2500,4000)),
+      sciName == "Antillogorgia_bipinnata" ~ scale_y_continuous(limits = c(0,3000), breaks = c(0,1000,2000,3000))
+      
+    )
+  )+
+  geom_vline(xintercept = 2017, color = "gray75",alpha=0.5, linewidth = 1.5)  
+indv_species_biomass
+
+
+ggsave(filename = "Biomass_CREMP_pooled species.png", plot = p_biomass.pooled,  width =25 , height = 10,dpi=600, bg = "white", units = "cm")
+
+ggsave(filename = "Biomass_CREMP_indv_species.png", plot = indv_species_biomass,  width =25 , height =35,dpi=600, bg = "white", units = "cm")
 
 #Another plot i am not using this time
 
@@ -235,21 +260,35 @@ total_species_density <-  ggplot()+
  geom_jitter(data=density_CREMP_species, aes(x=Year, y = density), alpha=0.4)+
   geom_line(data=dense_species, aes(x = Year, y = mean_density, color = sciName ), linewidth = 2  )+
   scale_x_continuous(breaks=seq(2011,2022,2))+
-  facet_wrap(~sciName + Subregion, nrow=5) +labs(x = "Year",
+  facet_wrap(~sciName + Subregion, nrow=5,scales = "free_y") +labs(x = "Year",
                                          y = "Colonies m2",
                                          title = "Mean density of octocoral spp. by subregion in Florida KEYS using CREMP data")+
   guides(fill = guide_legend()) +
   theme(legend.direction = "horizontal",strip.background = element_blank(),
         legend.position = "bottom",
         legend.title = element_blank(),
-        legend.text = element_text(color = "black", size = 10))
+        legend.text = element_text(color = "black", size = 10),plot.title = element_text(size = 12))
 total_species_density
 
-#Now for pooled data
+total_species_density <- total_species_density +
+  facetted_pos_scales(
+    y = list(
+      sciName == "Antillogorgia_americana" ~ scale_y_continuous(limits = c(0,20), breaks = c(0,10, 20)),
+      sciName == "Pseudoplexaura porosa" ~ scale_y_continuous(limits = c(0,3), breaks = c(0,1.5,3)),
+      sciName == "Eunicea_flexuosa" ~ scale_y_continuous(limits = c(0,3), breaks = c(0,1.5,3)),
+      sciName == "Gorgonia_ventalina" ~ scale_y_continuous(limits = c(0,25), breaks = c(0,10,25)),
+      sciName == "Antillogorgia_bipinnata" ~ scale_y_continuous(limits = c(0,15), breaks = c(0,7.5,15))
+      
+    )
+  )+
+  geom_vline(xintercept = 2017, color = "gray75",alpha=0.5, linewidth = 1.5)  
 
+total_species_density
+
+#Pooled data#######
 total_pool_density <-  ggplot()+
-  geom_jitter(data=density_CREMP_pooled, aes(x=Year, y = density), color="orange", alpha=0.4)+
-  geom_line(data=dense_pooled, aes(x=Year, y = mean_density), color="skyblue" , linewidth = 2  )+
+  geom_jitter(data=density_CREMP_pooled, aes(x=Year, y = density), color="orange", alpha=0.8)+
+  geom_line(data=dense_pooled, aes(x=Year, y = mean_density), color="black" , linewidth = 2  )+
   scale_x_continuous(breaks=seq(2011,2022,2))+
   facet_wrap(~sciName + Subregion) +labs(x = "Year",
                                          y = "Colonies m2",
@@ -258,14 +297,15 @@ total_pool_density <-  ggplot()+
   theme(legend.direction = "horizontal",strip.background = element_blank(),
         legend.position = "bottom",
         legend.title = element_blank(),
-        legend.text = element_text(color = "black", size = 10))
+        legend.text = element_text(color = "black", size = 10),plot.title = element_text(size=12))+
+  geom_vline(xintercept = 2017, color = "gray75",alpha=0.5, linewidth = 1.5)  
 
 total_pool_density
 
 #export *************
-ggsave(filename = "Density_CREMP_pooled species.png", plot = total_pool_density,  width =30 , height = 25,dpi=600,  units = "cm")
+ggsave(filename = "Density_CREMP_pooled species.png", plot = total_pool_density,  width =30 , height = 25,dpi=600, bg="white", units = "cm")
 
-ggsave(filename = "Density_CREMP_indv_species.png", plot = total_species_density,  width =30 , height = 25,dpi=600,  units = "cm")
+ggsave(filename = "Density_CREMP_indv_species.png", plot = total_species_density,  width =30 , height = 25,dpi=600, bg="white", units = "cm")
 
 # **********
 

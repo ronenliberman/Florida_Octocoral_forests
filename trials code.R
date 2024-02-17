@@ -268,7 +268,6 @@ join_density_sum <- join_density%>%
     # Generate a new table showing the count of significant increase, decrease, and no change
     # Adding average and SE to each of the 3 categories in the site table
 
-    
     summary_of_Site_pooled_octo <- Site_pooled_octo_summary %>%
       mutate(change_category = case_when(
         estimate > 0 & p.value < 0.05 ~ "Significant Increase",
@@ -289,50 +288,157 @@ join_density_sum <- join_density%>%
     library(nlme)
     library(lme4)
     # Create the adjusted model with covariance and autocorrelation parameters
-    
-    # Fit a linear mixed-effects model with nested random effects for Year within Site_name
-   repeated_model <- lmer(density ~ Year + (1 | Site_name/Year), data = species_data)    
-    # View the adjusted_model
-    summary(repeated_model)
-    
-    # Fit the lmer model
-    models <- species_data %>%
-      filter(sciName == "Total_Octocorals") %>% 
-      group_by(Site_name) %>%
-      do(mod = lmer(density ~ Year + (1 | Year:Site_name), data = .)) 
-    
-    # Retrieve model statistics
-    models_summary <- summary(models$mod)
-    models_summary
-    
-    # Iterate through the list of lmerMod objects and view the model summaries
-    for (i in 1:length(models_summary)) {
-      cat("Summary for Site", i, ":\n")
-      print(summary(models_summary[[i]]))
-    }
-    
-    #In this model I waant to know the rate of in the total density change in each site from the earliest data point to the most recent 
-    recent_year_data <- species_data %>%
-      filter(sciName=="Total_Octocorals") %>% 
-      filter(!is.na(density) & !is.na(Year)) %>%  # Filter out rows with NA values for 'density' and 'Year'
-      group_by(Site_name) %>%
-      filter(Year %in% c(min(Year), max(Year)))  # Filter for the rows with the earliest and most recent year for each site
-    
-    # Calculate the total change in species density using the slope coefficient
-    model_early_to_recent <- recent_year_data %>%
-      group_by(Site_name) %>%
-      do(mod = tidy(lm(density ~ Year, data = .))) %>%
-      unnest(mod)
-    
-    # View the model-level summary statistics
-    model_early_to_recent
-    
-    
-  # Optional: Visualizing the trends.
-  ggplot(species_data, aes(x = Year, y = density, group = interaction(sciName, Site_name), color = sciName)) +
-    #geom_line(aes(linetype = Site_name)) +
-    scale_x_continuous(breaks=seq(2011,2022,2))+ 
-    geom_smooth(method = "lm", se = FALSE, aes(fill = sciName), alpha = 0.3) +
-    facet_wrap(~Site_name, scales = "free_y") +
-    labs(color = "Species", linetype = "Site", fill = "Species")
+  head(combined)
   
+  total.density.data <- combined %>%
+    filter(sciName=="Total_Octocorals") %>% 
+    select(Year, Site_name, StationID , density) %>%
+    filter(!is.na(density), !is.na(Year), !is.na(Site_name)) 
+
+  
+  total.density.data$StationID <- as.factor(total.density.data$StationID)
+  glimpse(total.density.data)
+  str(total.density.data) 
+  # Fit a linear mixed-effects model with nested random effects for Year within Site_name
+  
+  # Fit the model
+  model <- lmer(density ~ Year + (1|Year/Site_name/StationID), data = total.density.data)  
+  
+  # Fit the model
+  model <- lmer(density ~ Year + (1|Year/Site_name), data = total.density.data)
+  
+head(total.density.data)
+
+#only one site
+unique(total.density.data$Site_name)
+
+admiral <- total.density.data %>% 
+  filter(Site_name=="Admiral") 
+admiral
+
+admiral.model <- lmer(density ~ Year  + (1+Year|StationID),data= admiral)
+summary(admiral.model)
+admiral.model$
+
+repeated_model <- lmer(density ~ Year + (1+Year|Site_name)+(1|StationID), data = total.density.data)
+  
+repeated_model_interaction <- lmer(density ~ Year*Site_name + (1+Year|Site_name), data = total.density.data)
+  # Print the model summary
+  summary(repeated_model_interaction)
+  summary(repeated_model)
+  
+  # Extract the fixed effects
+fixed_effects <- summary(repeated_model)$coefficients
+
+# Create a data frame
+df <- data.frame(fixed_effects)
+df
+
+# Filter the rows for the interaction terms
+interaction_terms <- grep("Year:Site_name", rownames(df), value = TRUE)
+interaction_terms <- df %>% filter(grepl("Year:Site_name", rownames(df)))
+
+rownames(interaction_terms) <- sub("Year:Site_name", "", rownames(interaction_terms))
+interaction_terms
+str(interaction_terms)
+# Convert row names to a column
+interaction_terms <- interaction_terms %>% 
+  rownames_to_column(var = "Site_name")
+
+# Filter for term = Year and arrange by slope, I am not intereted in the intercept which is the time 0 density comparison.
+year_term_summary <- interaction_terms %>%
+  mutate(depth = case_when(
+    grepl("Deep", Site_name) ~ "deep",
+    grepl("Shallow", Site_name) ~ "shallow",
+    TRUE ~ NA_character_
+  ))
+year_term_summary
+
+# Binding metadata about the sites from 'combined' to 'year_term_summary' by 'Site_name'
+Site_pooled_octo_summary <- year_term_summary %>%
+  left_join(combined %>% distinct(Site_name, Habitat, Subregion), by = "Site_name")
+Site_pooled_octo_summary
+
+summary_of_Site_pooled_octo <- Site_pooled_octo_summary %>%
+  mutate(change_category = case_when(
+    Estimate > 0 & t.value < 0.05 ~ "Significant Increase",
+    Estimate < 0 & t.value < 0.05 ~ "Significant Decrease",
+    TRUE ~ "No Change"
+  )) %>%
+  group_by(change_category) %>%
+  summarise(
+    average_estimate = mean(Estimate),
+    average_SE = sd(Estimate) / sqrt(n()),
+    count = n()
+  )
+
+# View the summary of term = Year and the new table showing the count of change categories
+summary_of_Site_pooled_octo # 8/20 have increased! 40% in the Keys. 
+
+# Calculate the slope for each site
+df[interaction_terms, "Estimate"] <- df[interaction_terms, "Estimate"] + df["Reference Site", "Estimate"]
+
+# Rename the interaction terms to just the site names
+rownames(df)[interaction_terms] <- gsub("Year:Site_name", "", rownames(df)[interaction_terms])
+
+# Filter the data frame to only include the sites
+df <- df[c("Reference Site", interaction_terms), ]
+
+# Print the data frame
+print(df)
+
+
+
+
+#################
+# the moment I dont like it
+biomass_total.station <- pop.dat %>% 
+  filter(Site_name != "Red Dun Reef") %>% 
+  filter(!(Subregion == "UK" & Year == 2011)) %>% 
+  group_by(Year,Subregion,Site_name,StationID) %>%
+  summarize(mean_biomass = mean(biomass), sd = sd(biomass),se = sd / sqrt(n()), n=n() ) %>% 
+  ungroup()
+
+view(biomass_total.station)
+
+total_biomass.alter <- biomass_total.station %>% 
+  group_by(Year,Subregion) %>%
+  summarize(pooled.taxa_biomass = sum(mean_biomass), SE = sum(se), n=n()) %>% 
+  ungroup()
+view(total_biomass.alter)
+total_biomass.alter$sciName= "pooled taxa" #prepare for binding rows
+
+#Bind rows 
+biomass_all <- bind_rows(biomass_means, total_biomass.alter)
+# View refined dataframe
+view(biomass_all)
+
+# Plot with facet wrap for both sciName and Subregion. Keep plot for pooled taxa seperate because of very different y axis scale. 
+
+#Filter datasets
+biomass.pooled <- biomass_all %>% 
+  filter(sciName == "pooled taxa")
+#%>% mutate(Year= as.character(Year) )
+view(biomass.pooled)
+biomass.species <- biomass_all %>%
+  filter(sciName != "pooled taxa")
+
+head(biomass.pooled)
+# Plot for pooled - 
+#this is an estimation as I dont have the heights of all the species in each 
+#transect and therefore I can only estimate based on the species that have been monitored.
+
+p_biomass.pooled<-  
+  ggplot(biomass.pooled, aes(x = Year, y = pooled.taxa_biomass)) +
+  geom_point() +
+  geom_path()+
+  geom_errorbar(aes(ymin = pooled.taxa_biomass - SE, ymax = pooled.taxa_biomass + SE)) +
+  # geom_errorbar(aes(ymin = mean_biomass - se, 
+  #                  ymax = mean_biomass + se)) + #na at thme moment
+  scale_x_continuous(breaks=seq(2012,2022,2))+
+  facet_wrap(~Subregion) +
+  labs(x = "Subregion",
+       y = "Biomass proxy",title = "Pooled Taxa Biomass (of 5 species) by Subregion in Florida keys using CREMP data")+
+  geom_vline(xintercept = 2017, color = "gray75",alpha=0.5, linewidth = 2)  +theme(plot.title = element_text(size = 12))
+
+p_biomass.pooled
