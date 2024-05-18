@@ -1,0 +1,130 @@
+---
+title: "Florida's Coral Reef GLMM"
+author: "Nick Jones"
+date: "2024-05-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### GLMM example
+
+```{r}
+library(glmmTMB)
+library(performance)
+library(tidyverse)
+library(ggplot2)
+library(plotrix)
+library(gridExtra)
+library(car)
+library(emmeans)
+library(DHARMa)
+```
+
+### Import data and manipulation
+#### Subset, convert year to factor for interannual testing, not just trend, creates additional factors sub_reef (habitat within sub-region) and reg_reef (habitat within region)
+
+```{r}
+cover_original <- read.csv("C:\\Users\\nj350\\OneDrive - Nova Southeastern University\\Documents\\PhD\\Data\\Benthic\\SECREMP\\FRT Cover Original Sites 2004.csv")
+
+cover_original <- subset(cover_original, Year >= "2004")
+cover_original$fYear <- factor(cover_original$Year)
+
+Sub_reef <- unite(cover_original[, 2:3], Sub_reef, sep = "_")
+
+cover_original <- cbind(cover_original, Sub_reef)
+
+site_info <- cover_original[, 1:3]
+site_info <- site_info[, -2] 
+Reg_reef <- unite(site_info[, 1:2], Reg_reef, sep = "_")
+
+cover_original <- cbind(cover_original, Reg_reef)
+
+cover_original$Reg_reef <- factor(cover_original$Reg_reef)
+cover_original$Sub_reef <- factor(cover_original$Sub_reef)
+
+```
+
+##### Model - this is a cover example - for count data, poisson distribution family or nbinom1 or nbinom2 would work well
+### Creates models of each
+```{r}
+#year vs region (SE florida, Keys, Tortugas) - random is site nested within habitat - try site/station but sometimes too complex to model or station variance very small
+
+cover_region <- glmmTMB(Octocoral ~ fYear * Region + (1| Reef/Site),
+                      family = binomial, weights = Total.Points, data = cover_original)
+summary(cover_region) 
+#weights key for correct model results - For a binomial GLM prior weights are used to give the number of trials when the response is the proportion of successes". Nothing more, nothing less. Scaling the weights will change the results because you change the NUMBER OF TRIALS 
+
+#option to extend the convergence time on the model if there's a lot of data
+cover_region <- update(cover_region, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+#model year * sub.region (e.g., upper, middle, lower keys) - option to add depth as a covariate - may be useful
+cover_sub_depth <- glmmTMB(Octocoral ~ fYear *Sub.region + Depth + (1| Reef/Site),
+                     family = binomial, weights = Total.Points, data = cover_original)
+cover_sub_depth <- update(cover_sub_depth, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+#model year * habitat - could substitute habitat for depth bins
+cover_reef <- glmmTMB(Octocoral ~ fYear * Reef + (1| Reef/Site),
+                       family = binomial, weights = Total.Points, data = cover_original)
+cover_reef <- update(cover_reef, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+#model year vs habitat within region
+cover_reg_reef_depth <- glmmTMB(Octocoral ~ fYear*Reg_reef + Depth + (1| Reef/Site),
+                        family = binomial, weights = Total.Points, data = cover_original)
+cover_reg_reef_depth <- update(cover_reg_reef_depth, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+#option that gorg density varies by year but all locations are varying in a similar way
+
+cover_year <- glmmTMB(Octocoral ~ fYear + (1| Reef/Site),
+                      family = binomial, weights = Total.Points, data = cover_original)
+cover_year <- update(cover_year, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+#may need to add an additional covariate to account for variation but I'd start with these models
+
+
+#model selection using AIC - choose lowest AIC
+AIC(cover_region, cover_region_1, cover_sub_depth, cover_reef, cover_reg_reef_depth, cover_year)
+
+#in these models sub-dividing the data by habitat within region are best
+```
+
+### Model validation
+
+```{r}
+
+simulationOutput <- simulateResiduals(cover_reg_reef_depth, n = 1000)
+plot(simulationOutput)
+#residuals vs predicted plots with lots of data (n > 2000) create quantile regression and a parametric smoother as default.
+#2 options to solve - 1. Use quantreg = T in plot(simulationoutput) to see if that solves
+#                     2. Group the data by a factor (e.g. by site) and create new residuals using recalculateresiduals(). Then check residuals plot and test residuals using this
+
+#recalculate residuals as per advice from Florian Hartig, Dharma programmer
+#recalculates as too many samples for Dharma to calculate, grouping by site
+resids <- recalculateResiduals(simulationOutput, group = cover_original$Site)
+plot(resids) #suggests heterogeneity in the data (right plot) - could add a dispersion factor in the model but carry on for this example
+testResiduals(resids) #residuals uniform, dispersion ok, no outliers but a couple of tests marginal (e.g., dispersion p-value = 0.07) - test individually
+testOutliers(resids, type = "bootstrap") #no outliers
+testDispersion(simulationOutput) #dispersion fine
+
+#as there are multiple transects at a site, residuals grouped by year following protocol advice of Florian Hartig
+res <- recalculateResiduals(simulationOutput, group = cover_original$fYear)
+testTemporalAutocorrelation(simulationOutput = res, time = unique(cover_original$fYear)) #sign of temporal autocorrelation - could add an ar1 constant to account for this
+
+```
+
+### If the models good proceed, calculate R2 and post hoc analysis
+
+```{r}
+
+r2(cover_reg_reef_depth)  #best model year x ref_reef + depth - random too complex and marginal R2 not accounting for loads - lots of heterogeneity between sites
+
+#post hoc analysis using estimated marginal means of the model predictions - this looks at the interaction
+emm.count <- emmeans(cover_reg_reef_depth, ~ fYear|Reg_reef)
+contrast(emm.count) #compares estimated marginal means vs mean of the factor (linear contrasts analysis)
+pairs(emm.count) #pairwise comparison between levels (default is Tukey post hoc test)
+plot(emm.count) #plots the emmeans model
+
+```
+
