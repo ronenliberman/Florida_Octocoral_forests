@@ -1,0 +1,222 @@
+---
+title: "Modelling_cover_data"
+author: "Ronen liberman"
+date: "2024-06-13"
+output: 
+  html_document:
+    theme: cerulean
+    toc: yes
+    toc_float:
+      collapsed: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r install_libraries, eval=FALSE}
+# Install necessary libraries
+install.packages(c("rmdformats", "prettydoc", "hrbrthemes", "tint", "tufte"))
+```
+
+```{r initiate-environment, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library("knitr")
+library("gridExtra")
+library("ggpubr")
+library("data.table")
+library(lme4)
+library(glmmTMB)
+library(bbmle)
+library(performance)
+library(ggplot2)
+library(plotrix)
+library(gridExtra)
+library(car)
+library(emmeans)
+library(DHARMa)
+library(RRPP)
+library(MuMIn)
+library(MASS)
+library(lattice)
+library(rmdformats)
+library(prettydoc)
+library(hrbrthemes)
+library(tint)
+library(tufte)
+```
+
+
+Data prep. 
+I am using the "Cover_All.csv" dataset that was prepared by Alex Hiley
+
+```{r}
+Cover_All <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/Cover_All.csv")
+# Convert Depth to numeric
+Cover_All$Depth <- as.numeric(as.character(Cover_All$Depth))
+Cover_All <- Cover_All[,-1] #remove extra column
+#Cover_All <- Cover_All[Cover_All$SampleYear!='2012',]
+Cover_All <- Cover_All[Cover_All$SiteID!='29',]
+Cover_All <- Cover_All[Cover_All$SiteID!='90',]
+
+
+# Convert SiteID and StationID to factors 
+Cover_All <- Cover_All %>%
+  mutate(SiteID = as.factor(SiteID),
+         StationID = as.factor(StationID))
+
+#Add depth groups#
+Cover_Depth <- Cover_All %>% 
+  mutate(Depth_group = case_when(
+    Depth < 20 ~ "Shallow",
+    Depth >= 20 & Depth < 45 ~ "Mid", 
+    Depth >= 45 ~ "Deep"
+  ))
+
+
+glimpse(Cover_Depth)
+```
+Modelling 
+Here I follow the same model structure that has been developed for the density and biomass data. The difference here is that I run models using 'family = binomial', and the model takes into account the number of points per image as weights. 
+
+```{r message=TRUE, warning=FALSE}
+cover_full_model = glmmTMB(OCTO ~ factor(Year) * Subregion+Depth+Habitat+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+
+cover_depth <- glmmTMB(OCTO ~ factor(Year) * Depth+ (1|SiteID/StationID),
+                          control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                       weights = points,family = binomial,data = Cover_Depth)
+
+cover_depth2 <- glmmTMB(OCTO ~ factor(Year) * Depth_group + (1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+cover_Subregion <- glmmTMB(OCTO ~ factor(Year) * Subregion+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+cover_Subregion2 <- glmmTMB(OCTO ~ factor(Year) + Subregion+Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+cover_Subregion3 <- glmmTMB(OCTO ~ factor(Year) * Subregion+Depth_group+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+cover_Subregion4 <- glmmTMB(OCTO ~ factor(Year) + Subregion+Habitat+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+cover_ProjectRegion <- glmmTMB(OCTO ~ factor(Year) * ProjectRegion +(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+cover_ProjectRegion2 <-  glmmTMB(OCTO ~ factor(Year) + ProjectRegion +Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+
+cover_ProjectRegion3 <-  glmmTMB(OCTO ~ factor(Year) * ProjectRegion+Habitat+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+cover_Year <- glmmTMB(OCTO ~ factor(Year) * Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+
+cover_habitat <- glmmTMB(OCTO ~ factor(Year) * Habitat+(1|SiteID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+cover_habitat2 <- glmmTMB(OCTO ~ Year + Habitat+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+cover_habitat3 <- glmmTMB(OCTO ~ factor(Year) * Habitat+Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+cover_habitat4 <- glmmTMB(OCTO ~ factor(Year) + Habitat+Depth_group +(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+
+cover_null <- glmmTMB(OCTO ~  + 1, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover_Depth)
+```
+
+#Model selection
+```{r echo=FALSE}
+AICtab(cover_full_model,
+       cover_depth,cover_depth2,
+       cover_Subregion,cover_Subregion2,cover_Subregion3,cover_Subregion4,
+       cover_ProjectRegion,cover_ProjectRegion2,cover_ProjectRegion3,
+       cover_Year,
+       cover_habitat,cover_habitat2,cover_habitat3,cover_habitat4,
+       cover_null)
+
+#BIC(cover_full_model,
+ #      cover_depth,cover_depth2,
+#       cover_Subregion,cover_Subregion2,cover_Subregion3,cover_Subregion4,
+#       cover_ProjectRegion,cover_ProjectRegion2,cover_ProjectRegion3,
+#       cover_Year,
+#       cover_habitat,cover_habitat2,cover_habitat3,cover_habitat4,
+#       cover_null)
+```
+The best model , with the lowest AIC was found to be cover_habitat3, this model has Year*Habitat + Depth as explanatory fixed factors and Station nested in Site as Random effect 
+Model Summary 
+```{r echo=FALSE}
+summary(cover_habitat3)
+```
+
+Validation of the best model
+Plotting residuals vs. fitted shows there ia high variation in the High numbers, similar to density data more or less
+
+```{r echo=FALSE}
+# Check for residual pattern within groups and difference between groups     
+xyplot(residuals(cover_habitat3) ~ fitted(cover_full_model),
+       panel=function(x, y){
+         panel.xyplot(x, y)
+         panel.loess(x, y, span = 3)
+         panel.lmline(x, y, lty = 2)  # Least squares broken line
+       }
+)
+```
+
+Validation of the best model - cover_habitat3 using the DHarma package
+```{r message=FALSE, warning=FALSE}
+cover_simulationOutput <- simulateResiduals(cover_habitat3 , n = 2000, plot = TRUE,quantreg = T) #  Dispersion is OK, QQ plot is fine, but it seems this model has issues with ouliars and uniformity 
+
+
+#Check individually 
+testDispersion(cover_simulationOutput) #dispersion fine
+testOutliers(cover_simulationOutput, type = "bootstrap") #OUTLIAR test significant: 0.02! This can be a problem!
+
+#To see if we this model has outliars in specific groups I can look at the specific model explanatory variables 
+# Check per Habitat 
+cover_resids1 <- recalculateResiduals(cover_simulationOutput, group = Cover_All$Habitat)
+testResiduals(cover_resids1)
+
+# here we see that that if we look at the outlines per the habitat  group the result is no significant in any parameter, thus our model is validated for this group.  
+
+# Check per Year
+cover_resids2 <- recalculateResiduals(cover_simulationOutput, group = Cover_All$Year)
+testResiduals(cover_resids2)
+ # here we have a problem with the uniformity, which make sense. But dispersion and outliars are fine. 
+
+# Check per Site
+cover_resids3 <- recalculateResiduals(cover_simulationOutput, group = Cover_All$Site)
+testResiduals(cover_resids3)
+
+#Site reveals problem in KS and outliars 
+
+# Check per Site
+cover_resids4 <- recalculateResiduals(cover_simulationOutput, group = Cover_All$Depth)
+testResiduals(cover_resids4)
+
+ # here we see that that if we look at the outlines per the Depth group the result is no significant in any parameter, thus our model is validated for this group.  
+
+```
