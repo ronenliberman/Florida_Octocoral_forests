@@ -1,0 +1,255 @@
+---
+title: "Modelling_octocoral_biomass data"
+author: "Ronen liberman"
+date: "6-17-2024"
+output: 
+  html_document:
+    theme: cerulean
+    toc: yes
+    toc_float:
+      collapsed: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r initiate-environment, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library("knitr")
+library("gridExtra")
+library("ggpubr")
+library("data.table")
+library(glmmTMB)
+library(bbmle)
+library(performance)
+library(ggplot2)
+library(plotrix)
+library(gridExtra)
+library(car)
+library(emmeans)
+library(DHARMa)
+library(RRPP)
+library(MuMIn)
+library(MASS)
+library(lattice)
+```
+#Data preparation for modelling 
+```{r}
+#Use the density and heights by station data that was prepared using the "Creating_binding_all_datasets.R" script 
+dat <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/all_density_and_heights_by_stationID.csv")
+head(dat)
+
+biomass_data <- dat %>% 
+  filter(SPP_Code != "TOCT")
+colnames(biomass_data)
+
+#glimpse(biomass_data)
+
+# Step 1: Remove duplicates
+cleaned_biomass_data <- biomass_data %>%
+  dplyr::select(-Date.x) %>%  # remove Date.x if not needed
+  distinct(Year, Subregion,SiteID, Site_name, StationID, SPP_Code, .keep_all = TRUE) # make sure no duplicates in the data
+
+# Step 2: Summarize total biomass per station
+total_biomass_per_transect <- cleaned_biomass_data %>%
+  filter(Year != 2012) %>%  # filter out the year 2012 
+  group_by(Year, Subregion, Site_name, StationID) %>%
+  summarize(
+    pooled.taxa_biomass = sum(biomass, na.rm = TRUE),
+    n = n()
+  ) %>%
+  ungroup()
+
+# View the summarized biomass per station
+print(total_biomass_per_transect)
+
+# Extract unique station metadata
+station_metadata <- biomass_data %>%
+  dplyr::select("SiteID","StationID", "ProjectRegion","Habitat", "Depth", "latDD", "lonDD", "latDeg", "latMin", "lonDeg", "lonMin") %>%
+  distinct()
+
+# Merge summarized biomass data with station metadata
+total_biomass_per_transect <- total_biomass_per_transect %>%
+  left_join(station_metadata, by = c( "StationID"))
+
+glimpse(total_biomass_per_transect)
+
+# Possible way to check how the data is distributed <- Create the plot using ggplot 
+#ggplot(total_biomass_per_transect, aes(x = Year, y = pooled.taxa_biomass)) +
+#  geom_point() +
+#  facet_wrap(~ Subregion, scales = "free_y") +
+#  labs(title = "Biomass by Year and Subregion",
+#       x = "Year",
+#       y = "Pooled Taxa Biomass") +
+#  theme_minimal()
+
+# From this it's clear that the biomass in SECREMP sites is much lower - very different y axis. This make sense becuase this project collecting data on 3 species only, which also explain less of the total population. 
+# this is why it is prefered here to remove SECREMP from the analysis. 
+
+
+#Similar to the density analysis, here I remove sites that have focused specifically on other invertebrates, or that unnaturally had no octocorals. 
+omit_sites2 <- c("Red Dun Reef","Palmata Patch","Loggerhead Patch", "Texas Rock","Broward County A","Davis Rock")
+
+omited_biomass_FK_DT <- total_biomass_per_transect %>% 
+ filter(ProjectRegion != "SECREMP") %>%  
+  filter(!(Site_name %in% omit_sites2)) 
+
+glimpse(omited_biomass_FK_DT)
+# look at the frequency of biomass 
+
+hist(omited_biomass_FK_DT$pooled.taxa_biomass, breaks=100, xlab = "biomass", main = NULL, freq = TRUE) # this doesnt work for some reason
+
+
+# this looks like a poisson distribution - but has many more of the smaller biomass group. 
+
+
+#omited_biomass_All <- total_biomass_per_transect %>% 
+#  filter(!(Site_name %in% omit_sites2)) 
+
+#hist(omited_biomass_All$pooled.taxa_biomass, breaks=100, xlab = "biomass", main = NULL, freq = TRUE) # this doesnt work for some reason
+
+```
+
+
+# Now do model selection with this data using poisson
+```{r}
+biomass_full_model = glmmTMB(pooled.taxa_biomass ~ factor(Year) * Subregion +Depth+Habitat+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                                 family = poisson, 
+                                 data = omited_biomass_FK_DT)
+
+
+biomass_depth <- glmmTMB(pooled.taxa_biomass ~ factor(Year) * Depth+ (1|SiteID/StationID),
+                          control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                                                    family = poisson, 
+                                                    data = omited_biomass_FK_DT)
+
+biomass_depth2 <- glmmTMB(pooled.taxa_biomass ~ Year * Depth + (1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                          family = poisson, 
+                          data = omited_biomass_FK_DT)
+
+biomass_Subregion <- glmmTMB(pooled.taxa_biomass ~ factor(Year) * Subregion+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                             family = poisson, 
+                             data = omited_biomass_FK_DT)
+
+biomass_Subregion2 <- glmmTMB(pooled.taxa_biomass ~ factor(Year) + Subregion+Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                             family = poisson, 
+                             data = omited_biomass_FK_DT) 
+
+biomass_Subregion3 <- glmmTMB(pooled.taxa_biomass ~ Year * Subregion+Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                              family = poisson, 
+                              data = omited_biomass_FK_DT) 
+
+biomass_ProjectRegion <- glmmTMB(pooled.taxa_biomass ~ factor(Year) * ProjectRegion +(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                                            family = poisson, 
+                                            data = omited_biomass_FK_DT)
+
+biomass_ProjectRegion2 <-  glmmTMB(pooled.taxa_biomass ~ factor(Year) + ProjectRegion +Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                                             family = poisson, 
+                                             data = omited_biomass_FK_DT)
+
+
+biomass_ProjectRegion3 <-  glmmTMB(pooled.taxa_biomass ~ factor(Year) * ProjectRegion+Habitat+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                                   family = poisson, 
+                                   data = omited_biomass_FK_DT)
+
+biomass_Year <- glmmTMB(pooled.taxa_biomass ~ factor(Year) * Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                        family = poisson, 
+                        data = omited_biomass_FK_DT)
+
+
+biomass_habitat <- glmmTMB(pooled.taxa_biomass ~ factor(Year) * Habitat+(1|SiteID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                           family = poisson, 
+                           data = omited_biomass_FK_DT)
+
+biomass_habitat2 <- glmmTMB(pooled.taxa_biomass ~ Year + Habitat+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                                      family = poisson, 
+                                      data = omited_biomass_FK_DT)
+
+biomass_habitat3 <- glmmTMB(pooled.taxa_biomass ~ factor(Year) * Habitat+Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                                      family = poisson, 
+                                      data = omited_biomass_FK_DT)
+
+biomass_habitat4 <- glmmTMB(pooled.taxa_biomass ~ factor(Year) + Habitat+Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                                      family = poisson, 
+                                      data = omited_biomass_FK_DT)
+
+biomass_null <- glmmTMB(pooled.taxa_biomass ~  + 1, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),
+                                  family = poisson, 
+                                  data = omited_biomass_FK_DT)
+```
+
+#Model selection
+```{r}
+AICtab(biomass_full_model,
+       biomass_depth,biomass_depth2,
+       biomass_Subregion,biomass_Subregion2,biomass_Subregion3,
+       biomass_ProjectRegion,biomass_ProjectRegion2,biomass_ProjectRegion3,
+       biomass_Year,
+       biomass_habitat,biomass_habitat2,biomass_habitat3,biomass_habitat4,
+       biomass_null)
+
+BIC(biomass_full_model,
+       biomass_depth,biomass_depth2,
+       biomass_Subregion,biomass_Subregion2,biomass_Subregion3,
+       biomass_ProjectRegion,biomass_ProjectRegion2,biomass_ProjectRegion3,
+       biomass_Year,
+       biomass_habitat,biomass_habitat2,biomass_habitat3,biomass_habitat4,
+       biomass_null)
+```
+The Model with the interaction between tje explanatory variables of Year and Subregion has both the lowest AIC and BIC and therefore it is my best model
+
+Model Summary 
+```{r echo=FALSE}
+summary(biomass_Subregion)
+```
+
+#Validation of the best model
+```{r}
+simulationOutput <- simulateResiduals(biomass_Subregion , n = 1000, plot = TRUE,quantreg = T) # Here dispersion is good, KS is not significant but close, but outliars is significant 
+
+#see individually 
+testDispersion(simulationOutput)
+testOutliers(simulationOutput, type = "bootstrap")
+
+#To see if we this model has outliars in specific groups I can look at the specific model explenatory variales 
+# Check per Subregion 
+resids1 <- recalculateResiduals(simulationOutput, group = omited_biomass_FK_DT$Subregion)
+testResiduals(resids1)
+plot(resids1) # here we see that that if we look at the outliars per group the result is no significant in any parameter, thus our model is validated.  
+
+# Check per Subregion 
+resids2 <- recalculateResiduals(simulationOutput, group = omited_biomass_FK_DT$Year)
+testResiduals(resids2)
+plot(resids2) # here we see that that if we look at the outliars per group = Year , the outliars are uniform and dispersion is good. deviation is significant, which adds an issue, but it doesn't mean our model is completely not correct. 
+
+```
+#Model using Family=nbinom  
+Becuase the best model has issues with Outliares, I can try to see if a different distribution like non binomial can make a difference. I will try this on the subregion model
+
+```{r}
+nbinom_biomass_Subregion <- update(biomass_Subregion, family = nbinom1)
+summary(nbinom_biomass_Subregion)
+#Validation
+simulationOutput <- simulateResiduals(nbinom_biomass_Subregion , n = 1000, plot = TRUE,quantreg = T) # Here deviation and and KS are good, but ouliars perform strangely
+
+#see individually 
+testDispersion(simulationOutput)
+testOutliers(simulationOutput,type = "bootstrap")
+#No real issue with outliars here
+
+#To see if we this model has outliars in specific groups I can look at the specific model explenatory variales 
+# Check per Subregion 
+resids1 <- recalculateResiduals(simulationOutput, group = omited_biomass_FK_DT$Subregion)
+testResiduals(resids1)
+plot(resids1) # here there is an issue with calculating the residuals, but overall no significant problems are found.  
+
+
+# Check per Subregion 
+resids2 <- recalculateResiduals(simulationOutput, group = omited_biomass_FK_DT$Year)
+testResiduals(resids2)
+plot(resids2) # Here there are significant problems with uniformity and dispersion. 
+```
+So, similar to using the Poisson dist. the parameter = Year is causing issues to our best model, however, these issues are great using the nbinom dist and therefore I choose the poisson. 
+
+
