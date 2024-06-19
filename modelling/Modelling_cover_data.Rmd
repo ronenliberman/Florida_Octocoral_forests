@@ -48,25 +48,33 @@ library(tufte)
 
 
 Data prep. 
-I am using the "Cover_All.csv" dataset that was prepared by Alex Hiley
+I am using the "Cover_All.csv" dataset. The sites are similar to the list of sites that were used to model density and biomass data. 
+A code chunk of data preparation should be added here later 
 
 ```{r}
-Cover_All <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/Cover_All.csv")
+Cover_dat <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/Cover_All.csv")
 # Convert Depth to numeric
-Cover_All$Depth <- as.numeric(as.character(Cover_All$Depth))
-Cover_All <- Cover_All[,-1] #remove extra column
-#Cover_All <- Cover_All[Cover_All$SampleYear!='2012',]
-Cover_All <- Cover_All[Cover_All$SiteID!='29',]
-Cover_All <- Cover_All[Cover_All$SiteID!='90',]
+Cover_dat$Depth <- as.numeric(as.character(Cover_dat$Depth))
+Cover_dat <- Cover_dat[,-1] #remove extra column
 
+# Clean the Habitat column by trimming leading and trailing spaces
+library(stringr)
+Cover_dat <- Cover_dat %>%
+  mutate(Habitat = str_trim(Habitat))
+unique(Cover_dat$Habitat)
 
 # Convert SiteID and StationID to factors 
-Cover_All <- Cover_All %>%
+Cover_Depth <- Cover_dat %>%
   mutate(SiteID = as.factor(SiteID),
-         StationID = as.factor(StationID))
+         StationID = as.factor(StationID))%>% 
+  mutate(Depth_group = case_when(
+    Depth < 20 ~ "Shallow",
+    Depth >= 20 & Depth < 45 ~ "Mid", 
+    Depth >= 45 ~ "Deep"
+  ))
 
 #Add depth groups#
-Cover_Depth <- Cover_All %>% 
+Cover_Depth <- Cover_dat %>% 
   mutate(Depth_group = case_when(
     Depth < 20 ~ "Shallow",
     Depth >= 20 & Depth < 45 ~ "Mid", 
@@ -75,8 +83,11 @@ Cover_Depth <- Cover_All %>%
 
 
 glimpse(Cover_Depth)
+unique(Cover_Depth$Subregion)
+unique(Cover_Depth$SiteName)
+unique(Cover_Depth$Habitat)
 ```
-Modelling 
+Modeling 
 Here I follow the same model structure that has been developed for the density and biomass data. The difference here is that I run models using 'family = binomial', and the model takes into account the number of points per image as weights. 
 
 ```{r message=TRUE, warning=FALSE}
