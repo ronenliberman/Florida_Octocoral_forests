@@ -1,0 +1,482 @@
+# Octocoral Juvenile 
+
+This part of the script was prepared for analyzing the proportion of octocoral Juveniles on Florida's Coral reefs. The first chunk is for preparing data from raw (not running now). This code creats a data for to compare our 5 target species only using their repective densities and heights.Afterwards the code below cleans the data a little bit, then uses GLMMs with binomial distribution to test for best fit model using model selection. We examine the most significant parameters that influence state of octocoral Juveniles on in FCR during 2013-2023.
+
+```{r Raw data prep., eval=FALSE, include=FALSE}
+#Lets get data for density of 5 species , because so far I did it only for total octocoral density 
+
+
+dat <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/all_density_and_heights_by_stationID.csv")#view(Total.octo_no_2012)
+
+density_DT<-  read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/DTCREMP_OCTO_Summaries_2011-2023_Density.csv" ) 
+
+density_SE <-  read.csv("~/Postdocing_NSU/Octocoral forests/Monitoring data/SECREMP_CSV_Files/SECREMP_OCTO_Summaries_2012-2023_Density.csv" ) 
+density_CREMP <- read.csv("~/Postdocing_NSU/Octocoral forests/Monitoring data/CREMP_CSV_Files/CREMP_OCTO_Summaries_2011-2023_Density.csv" ) 
+
+
+# Combine the datasets
+combined_dens <- bind_rows(density_DT, density_SE, density_CREMP)
+head(combined_dens, 20)
+
+colnames(combined_dens)
+#step 1: make long 
+density_long_dat <-  combined_dens %>% 
+  dplyr::select(-c(Eunicea_calyculata,Eunicea._calyculata )) %>% 
+  pivot_longer(cols=c('Gorgonia_ventalina', 'Antillogorgia_americana', 'Eunicea_flexuosa','Antillogorgia_bipinnata', 'Pseudoplexaura_porosa' ,'Total_Octocorals'),
+               names_to='sciName',
+               values_to='density') %>% 
+  filter(Year != 2011) 
+# Creating a list of sites that should be omitted from the datasets 
+omit_sites <- c("Martin County 1" ,"Martin County 2","Davis Rock","Palm Beach 1","Red Dun Reef","Palmata Patch","Loggerhead Patch", "Texas Rock","Broward County A")
+
+species <- c('Gorgonia_ventalina', 'Antillogorgia_americana', 'Eunicea_flexuosa','Antillogorgia_bipinnata', 'Pseudoplexaura_porosa')
+#three_species <- c('Gorgonia_ventalina', 'Antillogorgia_americana', 'Eunicea_flexuosa')
+
+target_dat <- density_long_dat %>%
+  #dplyr::select(-c(Eunicea_calyculata, Eunicea._calyculata)) %>%  
+  filter(Year != 2012) %>%
+  filter(!(Site_name %in% omit_sites)) %>% 
+  filter(sciName %in%  species) %>%  #omit total octocorals
+  # filter(sciName %in%  species) %>% #if filtering for 3 species
+  group_by(Year, Subregion, Habitat,Site_name,StationID) %>%
+  summarize(target_density = sum(density, na.rm = TRUE),
+            n = n()) %>% 
+  ungroup()
+
+head(target_dat) 
+# this is the density of 5 traget species in each of the transects in each year 
+
+##################
+#This part below is taking raw height data to generate proportion of juveniles from the total community of the 5 target species for each transect in each year.
+
+Height_SE <- read.table("~/Postdocing_NSU/Octocoral forests/Manuscript/raw_data/SE_OCTO_Raw_Data.txt", header = TRUE, sep = ",", quote = "\"", na.strings = "")
+Height_DT<-  read.table("~/Postdocing_NSU/Octocoral forests/Manuscript/raw_data/DT_OCTO_Raw_Data.txt", header = TRUE, sep = ",", quote = "\"", na.strings = "")
+Height_CREMP <-  read.table("~/Postdocing_NSU/Octocoral forests/Manuscript/raw_data/FLK_OCTO_Raw_Data.txt", header = TRUE, sep = ",", quote = "\"", na.strings = "")
+
+colnames(Height_SE)[colnames(Height_SE) == "Site_name"] <- "SiteName"
+
+# bind height data 
+Height_all <- rbind(Height_SE, Height_CREMP, Height_DT) 
+
+head(Height_all,10)
+
+# Count the number of unique SPP_Code
+unique_spp_count <- Height_CREMP %>% 
+  distinct(SPP_Code) 
+unique_spp_count
+#remove data on E. calyculata
+Height_all <- filter(Height_all, SPP_Code != "ECAL" & SPP_Code != "PBIP/PKAL")
+
+distinct(Height_all, SPP_Code) 
+
+height_dat <- Height_all %>%
+  filter(Year > 2012) %>% 
+  distinct() %>% 
+  mutate(sciName = dplyr::recode(sciName,
+                                 'Pseudopterogorgia americana' = 'Antillogorgia_americana',
+                                 "Eunicea flexuosa" = "Eunicea_flexuosa", 
+                                 "Gorgonia ventalina" = "Gorgonia_ventalina", 
+                                 "Pseudoplexaura porosa" = "Pseudoplexaura porosa", 
+                                 "Pseudopterogorgia bipinnata" = 'Antillogorgia_bipinnata', 
+                                 "Not Slimy - P. americana" = 'Antillogorgia_americana')) 
+
+head(height_dat) 
+
+#### Add station metadata ########### 
+
+transect_meta <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/raw_data/StationMetadata_corrected_habitatid.csv")
+head(transect_meta)
+
+meta_dat <- transect_meta %>% 
+  rename(StationID = stationid, SiteID = siteid, SiteName= sitename) 
+head(meta_dat)
+
+# Join the combined dataset with meta_dat based on SiteID and StationID
+colnames(height_dat)
+
+height_with_metadata <- left_join(height_dat, meta_dat, by = c("SiteID", "StationID","SiteName"))
+
+# Display the first few rows of the new dataset
+
+colnames(height_with_metadata)
+unique(height_with_metadata$habitatid) 
+unique(height_with_metadata$Habitat)  
+
+height.meta.df <- height_with_metadata %>% 
+  mutate(ProjectRegion = ifelse(ProjectRegion == "NPSDT/FKNMS", "NPSDT", ProjectRegion)) %>%
+  mutate(ProjectRegion = ifelse(Subregion == "DT", "NPSDT", ProjectRegion)) %>%
+  filter(!(SiteName %in% omit_sites)) %>% 
+  rename(Depth = offshoreDepth) %>% 
+  mutate(SiteID = as.factor(SiteID),
+         StationID = as.factor(StationID),
+         Reg.Hab = as.factor(paste(ProjectRegion, "_", habitatid)),
+         ProjectRegion = as.factor(ProjectRegion))
+
+unique(height.meta.df$ProjectRegion)
+unique(height.meta.df$Reg.Hab)
+glimpse(height.meta.df)
+
+# Generate 'mature' column
+height.meta.df <- height.meta.df %>%
+  mutate(mature = ifelse(Height.cm. <= 5, "Juvenile", "Adult"))
+unique(height.meta.df$sciName)
+
+# Calculate ratio Juvenile/Adults per Year, ProjectRegion
+three_target_species <- c( "Antillogorgia_americana", "Eunicea_flexuosa" ,"Gorgonia_ventalina")
+rm(species)
+# step 3: generate a ratio of juveniles/ adults for every station . 
+#then summerize it by projectRegion 
+colnames(height.meta.df)
+#rm(percent_mature_station)
+unique(height.meta.df$SiteName)
+
+percent_mature_station <- height.meta.df %>%
+  #filter(sciName %in% species) %>% 
+  mutate(mature = ifelse(Height.cm. <= 5, "Juvenile", "Adult")) %>%
+  # group_by(Year, ProjectRegion,StationID) %>%
+  group_by(Year, Subregion, habitatid,SiteName,StationID) %>%
+  filter(sum(mature == "Juvenile") <= sum(mature == "Adult")) %>%
+  ungroup() %>%
+  group_by(Year, ProjectRegion,Subregion, habitatid,SiteName,StationID, mature) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  pivot_wider(names_from = mature, values_from = count, values_fill = 0) %>%
+  mutate(Juv_proportion = Juvenile /(Juvenile+Adult)) %>%  #calaculate proportion of juveniles put of juveniles+adults
+  ungroup()
+glimpse(percent_mature_station)
+unique(percent_mature_station$habitatid)
+
+#Merge 
+# Convert StationID in percent_mature_station to integer
+percent_mature_station <- percent_mature_station %>%
+  mutate(StationID = as.integer(as.character(StationID)))
+# Perform the left join based on the specified columns
+merged_dataset <- left_join(percent_mature_station, target_dat, 
+                            by = c("Year", "Subregion", "StationID", "SiteName" = "Site_name"))
+#add more metadata 
+
+transect_meta <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/raw_data/StationMetadata_corrected_habitatid.csv")
+head(transect_meta)
+
+colnames(transect_meta)
+colnames(merged_dataset)
+
+sites <- merged_dataset$SiteName # make a list of the sites I am working with, this is used for subsetting 
+
+meta_dat <- transect_meta %>% 
+  rename(StationID = stationid, SiteID = siteid, SiteName = sitename, Depth = offshoreDepth) %>% 
+  mutate(ProjectRegion = ifelse(ProjectRegion == "NPSDT/FKNMS", "NPSDT", ProjectRegion)) %>% 
+  filter(SiteName %in% sites) %>% 
+  mutate(ProjectRegion = ifelse(SiteName == "Black Coral Rock", "NPSDT", ProjectRegion)) #Black Coral Rock is in the DRY tortugas~~ 
+
+head(meta_dat)
+
+traget_with_metadata <- left_join(merged_dataset, meta_dat, by = c("ProjectRegion","SiteName","habitatid", "StationID"))
+
+unique(traget_with_metadata$habitatid)
+
+traget_with_metadata$target_n <- traget_with_metadata$Adult+traget_with_metadata$Juvenile #Number of colonies in each transect
+traget_with_metadata$Reg.Hab <- paste(traget_with_metadata$ProjectRegion, "_", traget_with_metadata$habitatid)
+
+#export
+#write.csv(file= "~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/processed_juvenile and density of target species1.csv", traget_with_metadata) 
+```
+
+### Data prep. 
+I am using the "processed_juvenile and density of target species.csv" dataset. This was prepared in the previous code chunk. The sites are similar to the list of sites that were used to model density and Cover data. 
+
+```{r Data prep., echo=FALSE}
+#load density and juvenile proportion data for the 5 target species 
+
+
+FL.juv <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/processed_juvenile and density of target species1.csv")
+
+colnames(FL.juv)
+FL.juv <- FL.juv %>% 
+  dplyr::select("Year","ProjectRegion" ,"Subregion","SiteName","SiteID", "StationID", "habitatid","Reg.Hab", "Depth","Juv_proportion","target_density", "target_n" )
+
+# all categories for the modeling should be as.factor
+FL.juv$Year <- as.factor(FL.juv$Year)
+FL.juv$Reg.Hab <- as.factor(FL.juv$Reg.Hab)
+FL.juv$habitatid <- as.factor(FL.juv$habitatid)
+FL.juv$Subregion <- as.factor(FL.juv$Subregion)
+FL.juv$ProjectRegion <- as.factor(FL.juv$ProjectRegion)
+FL.juv$SiteName <- as.factor(FL.juv$SiteName) 
+FL.juv$SiteID <- as.factor(FL.juv$SiteID) 
+FL.juv$StationID <- as.factor(FL.juv$StationID) 
+
+#chaeck the data 
+unique(FL.juv$habitatid)
+unique(FL.juv$Reg.Hab)
+
+# Identify the rows with NA values in the merged dataset
+rows_with_na_ex1 <- FL.juv[rowSums(is.na(FL.juv)) > 0, ]
+
+# Print the rows with NA values in the merged dataset
+print(rows_with_na_ex1) # no rows with NA
+
+glimpse(FL.juv)
+str(FL.juv)
+#summary(FL.juv)
+
+# Open a new plotting window with specified dimensions
+dev.new(width = 10, height = 8)
+
+# Create the histogram
+hist(FL.juv$Juv_proportion)
+
+ggplot(FL.juv, aes(x = Year, y = Juv_proportion, colour = habitatid))+
+  geom_point(stat = "identity", size = 1)+
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(~Reg.Hab)+
+  theme_bw()+
+  theme(axis.text.y = element_text(size = 12, hjust = 1, colour = "black"),
+        axis.title.x = element_blank(), 
+        axis.title.y = element_text(size = 16), 
+        axis.text.x = element_text(size = 12, colour = "black",angle = 45, vjust = 1, hjust = 0.8),
+        plot.margin = margin(rep(15, 4)), 
+        axis.line = element_line(size = c(0.5, 0.5, 0.5, 0.5)), 
+        panel.grid.major.x = element_blank(), 
+        strip.text = element_text(size = 15, face = "bold.italic"), 
+        strip.background = element_rect(size=0.5),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        strip.text.y = element_blank())
+
+```
+# Modeling octocoral juveniles
+Here I follow the same model structure that has been developed for the density and cover datasets. The difference here is that I run models using 'family = binomial', and the model takes into account the number of octocoral colonies (sum of target species) per transect as weights.
+
+### Model selection 
+I am using 'FL.juv' data and 'binomial' family
+```{r}
+#Running models
+juv_full_model <- glmmTMB(Juv_proportion ~ Year + Subregion+Depth+Reg.Hab + 
+                              (1 | SiteID/StationID),
+                               family = binomial, weights = target_n,
+                               data = FL.juv)
+
+juv_Year <- glmmTMB(Juv_proportion ~ as.numeric(Year) + (1|SiteID/StationID),
+                                  family = binomial, weights = target_n,
+                                data = FL.juv)
+
+
+juv_depth.interacation  <- glmmTMB(Juv_proportion ~ Year * Depth + (1 | SiteID/StationID),
+                                family = binomial, weights = target_n,
+                                data = FL.juv)
+
+
+
+juv_Subregion1 <- glmmTMB(Juv_proportion ~ Year * Subregion + (1 | SiteID/StationID),
+                                    family = binomial, weights = target_n,
+                                    data = FL.juv)
+
+juv_Subregion2 <- glmmTMB(Juv_proportion ~ Year + Subregion + (1 | SiteID/StationID),
+                                     family = binomial, weights = target_n,
+                                     data = FL.juv)
+
+juv_Subregion_depth <- glmmTMB(Juv_proportion ~ Year * Subregion + Depth + (1 | SiteID/StationID),
+                                     family = binomial, weights = target_n,
+                                     data = FL.juv)
+
+juv_Subregion4 <- glmmTMB(Juv_proportion ~ Year * Subregion + Reg.Hab + (1 | SiteID/StationID),
+                                     family = binomial, weights = target_n,
+                                     data = FL.juv)
+
+juv_ProjectRegion1 <- glmmTMB(Juv_proportion ~ Year * ProjectRegion + (1 | SiteID/StationID),
+                                        family = binomial, weights = target_n,
+                                        data = FL.juv)
+
+juv_ProjectRegion2 <- glmmTMB(Juv_proportion ~ Year + ProjectRegion + 
+                                   (1 | SiteID/StationID),
+                                   family = binomial, weights = target_n,
+                                         data = FL.juv)
+
+juv_ProjectRegion_depth <- glmmTMB(Juv_proportion ~ Year * ProjectRegion + 
+                                     Depth + (1 | SiteID/StationID),
+                                    family = binomial, weights = target_n,
+                                    data = FL.juv)
+
+juv_ProjectRegion4 <- glmmTMB(Juv_proportion ~ Year *ProjectRegion + Reg.Hab+
+                                   (1 |SiteID/StationID),
+                                      family = binomial, weights = target_n,
+                                      data = FL.juv)
+
+juv_reg_hab <- glmmTMB(Juv_proportion ~ Year * Reg.Hab + 
+                         (1 | SiteID/StationID),
+                         family = binomial, weights = target_n,
+                          data = FL.juv)
+
+
+juv_reg_hab2 <- glmmTMB(Juv_proportion ~ Year * Reg.Hab + Depth + 
+                          (1 | SiteID/StationID),
+                           family = binomial, weights = target_n,
+                           data = FL.juv)
+binomial_model_reg_hab_v2 <- update(binomial_model_reg_hab_v2, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+ 
+juv_null <- glmmTMB(Juv_proportion ~ 1,
+                               family = binomial, weights = target_n,
+                               data = FL.juv)
+
+
+```
+
+Model comparison
+```{r Model comparison, echo=FALSE}
+### Model Comparison with AIC
+AICtab(juv_full_model,
+       juv_Year,
+       juv_depth.interacation,
+       juv_Subregion1,
+       juv_Subregion2,
+       juv_Subregion_depth,
+       juv_Subregion4,
+       juv_ProjectRegion1,
+       juv_ProjectRegion2,
+       juv_ProjectRegion_depth,
+       juv_ProjectRegion4,
+       juv_reg_hab,
+       juv_reg_hab2,
+       juv_null)
+
+
+#for exporting AIC numbers 
+
+# comparing the models , 
+AIC(binomial_full_model, 
+       binomial_model_depth,
+       binomial_model_Subregion, binomial_model_Subregion2, binomial_model_Subregion3, binomial_model_Subregion4,
+       binomial_model_ProjectRegion, binomial_model_ProjectRegion2, binomial_model_ProjectRegion3,
+       binomial_model_Year,
+       binomial_model_habitat, binomial_model_habitat2, binomial_model_habitat3,
+       binomial_model_reg_hab, binomial_model_reg_hab_v2,
+       binomial_model_null)
+
+```
+
+best model is binomial_model_reg_hab, but there are issues  
+
+Best model summary
+```{r}
+summary(juv_reg_hab) 
+summary(juv_reg_hab2) 
+r2(juv_reg_hab) #0.145; 0.088 - most variation wxplained by fixed factors Year and Reg.Hab
+
+r2(juv_reg_hab2) #0.145; 0.088 - most variation wxplained by fixed factors Year and Reg.Hab
+
+```
+
+### Model validation 
+```{r Model validation , echo=FALSE}
+best_mod <- juv_reg_hab
+
+simulationOutput <- simulateResiduals(best_mod, n = 1000, plot = TRUE,quantreg = T)
+# best Model looks good, no significant issues
+
+testDispersion(simulationOutput) #dispersion fine
+
+resids.site <- recalculateResiduals(simulationOutput, group = FL.juv$SiteName)
+plot(resids.site) # heterogeneity good, uniformity good, no outliars
+
+testResiduals(resids.site) #outliars very close to being significant, some evidence of outliers, try bootstrap as per Florian Hartig vignette advice
+
+testOutliers(resids.site, type = "bootstrap") #suggests after bootstrapping that residuals p.value = 1, this is strange, but it also wasnt significant before. so still fine
+testDispersion(resids.site) #dispersion fine
+
+```
+
+### Post-hoc
+calculated estimated marginal means and outputs estimates on the log scale.
+significant positive ratio estimate means juvenile prop. in year x is greater than in year y, significant negative means sig decline between year x and year y.
+```{r Post hoc Juvenile, echo=FALSE}
+
+emm.year.hab <- emmeans(best_mod, ~ Year|Reg.Hab) #compares years within habitat
+pairs(emm.year.hab) 
+contrast(emm.year.hab) #compares estimate for the year against the mean for that Reg.habitat
+plot(emm.year.hab)
+```
+### Visualize proportion of juveniles / density
+```{r Visualize, echo=FALSE}
+
+# Calculate the average, standard deviation, and standard error
+glimpse(FL.juv)
+summary_stats <- FL.juv %>%
+  group_by(Year, ProjectRegion) %>%
+  summarize(mean_juv_prop = mean(Juv_proportion ),
+            sd_prop = sd(Juv_proportion),
+            se_prop = sd(Juv_proportion) / sqrt(n()),
+            mean_target_density = mean(target_density),
+            sd_target_density = sd(target_density),
+            se_target_density = sd(target_density) / sqrt(n()))
+
+
+head(summary_stats)
+
+region_labels <- c(SECREMP = "SE Florida",
+                   FKNMS = "Florida Keys",
+                   NPSDT = "Dry Tortugas"
+)
+
+# Assuming 'summary_stats' is the summarized dataset
+coeff_ratio <- 100  # Assuming 100 to scale the ratio for visualization
+
+p_density_ratio <- ggplot(summary_stats, aes(x = Year, group = ProjectRegion)) +
+  
+  # Add line for mean target density
+  geom_line(aes(y = mean_target_density, color = "Mean Target Density"),
+            linewidth = 2, alpha = 0.8) +
+  
+  # Add ribbon for standard error of mean target density
+  geom_ribbon(aes(ymin = mean_target_density - se_target_density,
+                  ymax = mean_target_density + se_target_density,
+                  ), 
+              fill = "skyblue", alpha = 0.3) +
+  
+  # Add points and error bars for mean juvenile proportion (scaled)
+  geom_point(aes(y = mean_juv_prop * coeff_ratio, color = "Juvenile/Adult Ratio"), 
+             size = 3) +
+  
+  geom_errorbar(aes(ymin = (mean_juv_prop - se_prop) * coeff_ratio,
+                    ymax = (mean_juv_prop + se_prop) * coeff_ratio, 
+                    color = "Juvenile/Adult Ratio"),
+                width = 0.2, alpha = 0.7) +
+  
+  scale_y_continuous(
+    name = expression(bold("Mean density of target species (m"^2*")")),
+    sec.axis = sec_axis(~ . / coeff_ratio, name = "Juvenile/Adult Ratio (%)")
+  ) +
+  
+  scale_x_discrete(limits = levels(summary_stats$Year)) +
+  
+  scale_color_manual(values = c("Mean Target Density" = "dodgerblue3", 
+                                "Juvenile/Adult Ratio" = "darkorange2"),name = "") +
+  #scale_fill_manual(values = c("Mean Target Density" = "skyblue")) +
+  
+  facet_wrap(~ ProjectRegion,labeller = as_labeller(region_labels)) +
+  
+  theme_pubclean() +
+  
+  theme(
+    legend.position = "bottom",
+    axis.title.x = element_text(margin = margin(t = 10), face = "bold"),
+    axis.title.y = element_text(color = "black", face = "bold", size = 12, margin = margin(r = 10)),
+    axis.title.y.right = element_text(color = "black", face = "bold", size = 12, margin = margin(l = 10)),
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.margin = margin(20, 20, 20, 20)
+  ) +
+  
+  labs(x = "Year", title = "Mean Target Species Density and proportions of their juveniles") +
+  
+  coord_cartesian(expand = FALSE)
+
+# Print the plot
+p_density_ratio
+#export 
+#ggsave(file ="~/Mean target species density and juvenile proportion.jpg", p_density_ratio, width =45 , height = 18,dpi=600,  units = "cm" )   
+
+```
+

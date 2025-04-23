@@ -1,0 +1,337 @@
+Using this part of the script i am exporting the most relevant resuslts from the best fit models for octocoral density, cover, proportion of Juveniles. The script will save thos into different vectors and then will save all of them in different tab under one excel file. 
+
+```{r setup for export, include=FALSE}
+knitr::opts_knit$set(root.dir = "~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/Publication ready scripts/")
+```
+
+
+```{r load libraries , include=FALSE}
+### load libraries
+
+library(openxlsx)
+library(tidyverse)
+library(knitr)
+library(gridExtra)
+library(data.table)
+library(glmmTMB)
+library(bbmle)
+library(performance)
+library(plotrix)
+library(ggplot2)
+library(gridExtra)
+library(car)
+library(emmeans)
+library(officer)
+```
+
+### Density 
+
+```{r}
+###Density
+Total.octo_no_2012 <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/octo_density.csv")
+
+Total.octo_no_2012$Reg.Hab <- paste(Total.octo_no_2012$ProjectRegion, "_", Total.octo_no_2012$Habitat)
+Total.octo_no_2012$Reg.Hab <- as.factor(Total.octo_no_2012$Reg.Hab)
+Total.octo_no_2012$Habitat <- as.factor(Total.octo_no_2012$Habitat)
+Total.octo_no_2012$Subregion <- as.factor(Total.octo_no_2012$Subregion)
+Total.octo_no_2012$ProjectRegion <- as.factor(Total.octo_no_2012$ProjectRegion)
+Total.octo_no_2012$Depth_group <- as.factor(Total.octo_no_2012$Depth_group ) 
+Total.octo_no_2012$Year <- as.factor(Total.octo_no_2012$Year)
+Total.octo_no_2012$SiteID <- as.factor(Total.octo_no_2012$SiteID)
+Total.octo_no_2012$StationID <- as.factor(Total.octo_no_2012$StationID)
+
+# Calculate summary statistics: mean and SE of coverage by Year and Reg.Hab
+density_summary <- Total.octo_no_2012 %>%
+  group_by(Year, Reg.Hab) %>%
+  summarize(
+    avg_cover = mean(counts/10, na.rm = TRUE),  # Round avg_cover to 2 decimal places
+    se_density = sd(counts/10, na.rm = TRUE) / sqrt(n()),  # Round se_density to 2 decimal places
+    n = n()
+  ) %>%
+  filter(Year %in% c(2013, 2023)) # Filter for only the years 2013 and 2023
+# Print the summary table
+print(density_summary)
+
+#tab2: emmeans of best model 
+head(Total.octo_no_2012)
+str(Total.octo_no_2012)
+Best_model.ar1 <- glmmTMB(counts ~ Year * Reg.Hab+(1|SiteID/StationID) +
+                            ar1(Year-1|StationID),
+                          family = nbinom2, data = Total.octo_no_2012)
+Best_model.ar1 <- update(Best_model.ar1, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+#post hoc of temporal changes within habitats
+emm.year.hab <- emmeans(Best_model.ar1, ~ Year|Reg.Hab) #compares years within habitat
+pairs(emm.year.hab)
+
+# Convert the pairwise comparisons results to a data frame for better formatting
+pairs_summary <- as.data.frame(pairs(emm.year.hab))
+#pairs_summary
+head(pairs_summary)
+
+#tab3: 2013 - 2023 only changes 
+pairs.density_start_end <- pairs_summary %>%
+  filter(contrast == "Year2013 - Year2023")
+pairs.density_start_end
+```
+
+### Cover 
+
+```{r}
+Cover_dat <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/Cover_All.csv")
+#Cover_dat <- read.csv("C:\\Users\\nj350\\OneDrive - Nova Southeastern University\\Documents\\Publications\\Papers\\In Progress\\Liberman et al - Gorgs\\Cover\\Cover_All.csv")
+
+# Convert Depth to numeric
+Cover_dat$Depth <- as.numeric(as.character(Cover_dat$Depth))
+Cover_dat <- Cover_dat[,-1] #remove extra column
+
+# Clean the Habitat column by trimming leading and trailing spaces
+
+Cover_dat <- Cover_dat %>%
+  mutate(Habitat = str_trim(Habitat))
+
+Cover <- Cover_dat %>%
+  mutate(ProjectRegion = ifelse(ProjectRegion == "NPSDT/FKNMS", "NPSDT", ProjectRegion)) %>% 
+  mutate(ProjectRegion = ifelse(Subregion == "DT", "NPSDT", ProjectRegion)) %>% 
+  #filter(!(SiteName  %in% omit_sites)) %>% not needed as sites were already omitted from this dataset
+  mutate(Habitat = case_when(
+    SiteName == "The Maze" ~ "PIN",
+    SiteName == "White Shoal" ~ "P",
+    SiteName == "Prolifera Patch" ~ "P",
+    SiteName == "Temptation Rock" ~ "PIN",
+    SiteName == "Mayer's Peak" ~ "PIN",
+    SiteName == "Bird Key Reef" ~ "OD",
+    SiteName == "Black Coral Rock" ~ "PIN",
+    TRUE ~ Habitat  # Retain original value if no condition is met
+  )) %>% 
+  mutate(SiteID = as.factor(SiteID),
+         StationID = as.factor(StationID),
+         Year = as.factor(Year),
+         SiteID = as.factor(SiteID),
+         StationID = as.factor(StationID),
+         Habitat = as.factor(Habitat),
+         Subregion = as.factor(Subregion),
+         fYear  = as.factor(Year))%>% 
+  mutate(Depth_group = case_when(
+    Depth < 20 ~ "Shallow",
+    Depth >= 20 & Depth < 45 ~ "Mid", 
+    Depth >= 45 ~ "Deep"
+  ))
+
+Cover$Reg.Hab <- paste(Cover$ProjectRegion, "_", Cover$Habitat) #add Reg.hab
+Cover$Reg.Hab <- as.factor(Cover$Reg.Hab)
+Cover$ProjectRegion <- as.factor(Cover$ProjectRegion)
+
+#Check data factors
+unique(Cover$SiteName) #good 
+length(unique(Cover$SiteName)) #45 sites - good 
+
+unique(Cover$Habitat) # ok, level should be changed when needed 
+unique(Cover$Subregion) #good
+
+
+Cover$Reg.Hab <- factor(Cover$Reg.Hab, levels = c("NPSDT _ P", "NPSDT _ PIN", "NPSDT _ OD", "FKNMS _ P", "FKNMS _ OS", "FKNMS _ OD",
+                                                  "SECREMP _ Nearshore", "SECREMP _ Inner", "SECREMP _ Middle", 
+                                                  "SECREMP _ Outer"))
+
+#adding all branch column 
+Cover$all_branch <- Cover$BOCT + Cover$GVEN
+
+unique(Cover$Reg.Hab)  
+str(Cover)
+summary(Cover)
+
+#tab1: cover summaries 
+
+# Calculate summary statistics: mean and SE of coverage by Year and Reg.Hab
+cover_summary <- Cover %>%
+  group_by(Year, Reg.Hab) %>%
+  summarize(
+    avg_cover = mean(all_branch, na.rm = TRUE),  # Round avg_cover to 2 decimal places
+    se_density = sd(all_branch, na.rm = TRUE) / sqrt(n()),  # Round se_density to 2 decimal places
+    n = n()
+  ) %>%
+  filter(Year %in% c(2013, 2023)) # Filter for only the years 2013 and 2023
+
+# Print the summary table
+print(cover_summary)
+
+#tab2: post hoc of temporal changes within habitats
+#best model
+cover_reg.hab <- glmmTMB(all_branch ~ fYear * Reg.Hab+(1|SiteID/StationID),
+                         family = binomial, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)), weights = points, 
+                         data = Cover)
+#emmeans
+cover_emm.year.hab <- emmeans(cover_reg.hab, ~fYear|Reg.Hab)
+pairs(cover_emm.year.hab)
+# Convert the pairwise comparisons results to a data frame for better formatting
+pairs.cover_summary <- as.data.frame(pairs(cover_emm.year.hab))
+pairs.cover_summary
+
+#tab 3: model summary of first and last year
+newCover= pairs.cover_summary
+#str(newCover)
+pairs.cover_start_end <- newCover %>%
+  filter(contrast == "fYear2013 - fYear2023")
+pairs.cover_start_end
+#plot(cover_emm.year.hab)
+
+#calculate the change in cover per station
+cover.13.23 <- subset(Cover, Year == 2013| Year == 2023)
+
+cover.change <- cover.13.23 %>%
+  arrange(StationID, Year) %>%
+  mutate(Change = lag(OCTO)-OCTO) %>%
+  subset(Year == 2023)
+
+cover.change %>% group_by(Reg.Hab) %>%
+summarise(mean(Change), std.error(Change))
+cover.change
+```
+
+### Juvenile proportion 
+
+```{r}
+#load density and juvenile proportion data for the 5 target species 
+
+FL.juv <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/processed_juvenile and density of target species1.csv")
+
+colnames(FL.juv)
+FL.juv <- FL.juv %>% 
+  dplyr::select("Year","ProjectRegion" ,"Subregion","SiteName","SiteID", "StationID", "habitatid","Reg.Hab", "Depth","Juv_proportion","target_density", "target_n" )
+
+FL.juv$Year <- as.factor(FL.juv$Year)
+FL.juv$Reg.Hab <- as.factor(FL.juv$Reg.Hab)
+FL.juv$habitatid <- as.factor(FL.juv$habitatid)
+FL.juv$Subregion <- as.factor(FL.juv$Subregion)
+FL.juv$ProjectRegion <- as.factor(FL.juv$ProjectRegion)
+FL.juv$SiteName <- as.factor(FL.juv$SiteName) 
+FL.juv$SiteID <- as.factor(FL.juv$SiteID) 
+FL.juv$StationID <- as.factor(FL.juv$StationID) 
+
+head(FL.juv)
+#chaeck the data 
+unique(FL.juv$habitatid)
+unique(FL.juv$Reg.Hab)
+str(FL.juv)
+
+#tab 1: JUVENILE_summary
+summary_table <- FL.juv %>%
+  group_by(Reg.Hab, Year) %>% # Group by Reg.Hab and Year
+  summarise(
+    mean_juv_prop = mean(Juv_proportion, na.rm = TRUE), # Average Juv_proportion
+    sd_juv_prop = sd(Juv_proportion, na.rm = TRUE), # Standard deviation of Juv_proportion
+    n = n() # Sample size
+  ) %>%
+  # Add Standard Error calculation
+  mutate(std_error = sd_juv_prop / sqrt(n)) %>%
+  # Calculate year-over-year change in mean Juv_proportion
+  arrange(Reg.Hab, Year) %>% # Ensure correct order of years per Reg.Hab
+  group_by(Reg.Hab) %>%
+  mutate(
+    one_year_change = mean_juv_prop - lag(mean_juv_prop), # Difference between consecutive years
+    one_year_change_pct = (one_year_change / lag(mean_juv_prop)) * 100, # Percentage change
+    two_year_change = mean_juv_prop - lag(mean_juv_prop, n=2), # Change over two years
+    two_year_change_pct = (two_year_change / lag(mean_juv_prop, n=2)) * 100 # Percentage change over two years
+  ) %>%
+  ungroup()
+print(summary_table)
+
+#add 3 years average before and after huuricane Irma 
+
+# tab 2: emmeans pair 
+#Run best model again if not loaded
+binomial_model_reg_hab <- glmmTMB(Juv_proportion ~ Year * Reg.Hab + (1 | SiteID/StationID),
+                                  family = binomial, weights = target_n,
+                                  data = FL.juv)
+#binomial_model_reg_hab <- update(binomial_model_reg_hab, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+#emmeans
+emm.Juv_year.hab <- emmeans(binomial_model_reg_hab, ~ Year|Reg.Hab) #compares years within habitat
+pairs(emm.Juv_year.hab)
+contrast(emm.Juv_year.hab)
+# Convert the pairwise comparisons results to a data frame for better formatting
+pairs_juv <- as.data.frame(pairs(emm.Juv_year.hab)) #this had the wrong emmeans comparisons in it
+pairs_juv 
+
+#tab3: model summary of first and last year
+
+newJuv= pairs_juv
+newJuv <- newJuv %>%
+  filter(contrast == "Year2013 - Year2023")
+
+#calculate the change in juv ratio per station
+juvs.13.23 <- subset(FL.juv, Year == 2013| Year == 2023)
+
+juv.change <- juvs.13.23 %>%
+  arrange(StationID, Year) %>%
+  mutate(Change = lag(Juv_proportion)-Juv_proportion) %>%
+  subset(Year == 2023)
+
+juv.change %>% group_by(Reg.Hab) %>%
+  summarise(mean(Change), std.error(Change))
+```
+
+### Export to excel 
+
+```{r}
+# Create a new Excel workbook
+wb <- createWorkbook()
+
+##add COVER
+# Add a title worksheet
+addWorksheet(wb, "cover_Summary")
+
+# Write the density summary table 
+writeData(wb, "cover_Summary", cover_summary, startCol = 1, startRow = 1)
+
+# Add a second worksheet for emmeans pair-wise
+addWorksheet(wb, "cover_Emmeans")
+# Write the pairs summary table
+writeData(wb, "cover_Emmeans", pairs.cover_summary, startCol = 1, startRow = 1)
+# #add third tab worksheet for emmeans start and end year
+addWorksheet(wb, "cover_start-end")
+
+# Write the pairs summary table
+writeData(wb,  "cover_start-end", pairs.cover_start_end, startCol = 1, startRow = 1)
+
+#Add density
+# Add a title worksheet
+addWorksheet(wb, "Density_Summary")
+
+# Write the density summary table 
+writeData(wb, "Density_Summary", density_summary, startCol = 1, startRow = 1)
+
+# Add a second worksheet for emmeans pair-wise
+addWorksheet(wb, "Density_Emmeans")
+# Write the pairs summary table
+writeData(wb, "Density_Emmeans", pairs_summary, startCol = 1, startRow = 1)
+# #add third tab worksheet for emmeans start and end year
+addWorksheet(wb, "Density_start-end")
+
+# Write the pairs summary table
+writeData(wb,  "Density_start-end", pairs.density_start_end, startCol = 1, startRow = 1)
+
+
+##add Juveile proportion
+# Add a title worksheet
+addWorksheet(wb, "demography_Summary")
+
+# Write the density summary table 
+writeData(wb, "demography_Summary", summary_table, startCol = 1, startRow = 1)
+
+# Add a second worksheet for emmeans pair-wise
+addWorksheet(wb, "demography_Emmeans")
+# Write the pairs summary table
+writeData(wb, "demography_Emmeans", pairs_juv, startCol = 1, startRow = 1)
+
+# #add third tab worksheet for emmeans start and end year
+addWorksheet(wb, "demography_start-end")
+
+# Write the pairs summary table
+writeData(wb,  "demography_start-end", newJuv, startCol = 1, startRow = 1)
+
+# Save the workbook
+saveWorkbook(wb, "APRIL1_Octocoral_community_summary_AND_emmeans_pairwise.xlsx", overwrite = TRUE)
+```
+

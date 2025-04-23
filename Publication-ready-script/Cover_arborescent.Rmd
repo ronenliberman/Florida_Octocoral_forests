@@ -1,0 +1,256 @@
+# Octocoral Cover
+
+This part of the script was prepared for analyzing octocoral cover on Florida's Coral reefs We are using a dataframe that was prepared using another code, in a previous script, called Cover_all. The code below cleans the data a little bit, then uses GLMMs with binomial distribution to test for best fit model using model selection. We examine the most significant parameters that influence state of octocoral cover on in FCR during 2013-2023.
+
+### Data prep. for modeling octocoral cover 
+I am using the "Cover_All.csv" dataset. The sites are similar to the list of sites that were used to model density and Juvenile data. 
+
+```{r data prep., echo=FALSE}
+Cover_dat <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/Cover_All.csv")
+#Cover_dat <- read.csv("C:\\Users\\nj350\\OneDrive - Nova Southeastern University\\Documents\\Publications\\Papers\\In Progress\\Liberman et al - Gorgs\\Cover\\Cover_All.csv")
+
+# Convert Depth to numeric
+Cover_dat$Depth <- as.numeric(as.character(Cover_dat$Depth))
+Cover_dat <- Cover_dat[,-1] #remove extra column
+
+# Clean the Habitat column by trimming leading and trailing spaces
+
+Cover_dat <- Cover_dat %>%
+  mutate(Habitat = str_trim(Habitat))
+
+Cover <- Cover_dat %>%
+  mutate(ProjectRegion = ifelse(ProjectRegion == "NPSDT/FKNMS", "NPSDT", ProjectRegion)) %>% 
+  mutate(ProjectRegion = ifelse(Subregion == "DT", "NPSDT", ProjectRegion)) %>% 
+  #filter(!(SiteName  %in% omit_sites)) %>% not needed as sites were already omitted from this dataset
+  mutate(Habitat = case_when(
+    SiteName == "The Maze" ~ "PIN",
+    SiteName == "White Shoal" ~ "P",
+    SiteName == "Prolifera Patch" ~ "P",
+    SiteName == "Temptation Rock" ~ "PIN",
+    SiteName == "Mayer's Peak" ~ "PIN",
+    SiteName == "Bird Key Reef" ~ "OD",
+    SiteName == "Black Coral Rock" ~ "PIN",
+    TRUE ~ Habitat  # Retain original value if no condition is met
+  )) %>% 
+  mutate(SiteID = as.factor(SiteID),
+         StationID = as.factor(StationID),
+         Year = as.factor(Year),
+         SiteID = as.factor(SiteID),
+         StationID = as.factor(StationID),
+         Habitat = as.factor(Habitat),
+         Subregion = as.factor(Subregion),
+         fYear  = as.factor(Year))%>% 
+  mutate(Depth_group = case_when(
+    Depth < 20 ~ "Shallow",
+    Depth >= 20 & Depth < 45 ~ "Mid", 
+    Depth >= 45 ~ "Deep"
+  ))
+
+## Add all branching column ###
+
+Cover$all_branch <- Cover$BOCT + Cover$GVEN
+
+Cover$Reg.Hab <- paste(Cover$ProjectRegion, "_", Cover$Habitat) #add Reg.hab
+Cover$Reg.Hab <- as.factor(Cover$Reg.Hab)
+Cover$ProjectRegion <- as.factor(Cover$ProjectRegion)
+
+#Check data factors
+unique(Cover$SiteName) #good 
+length(unique(Cover$SiteName)) #45 sites - good 
+
+unique(Cover$Habitat) # ok, level should be changed when needed 
+unique(Cover$Subregion) #good
+
+
+Cover$Reg.Hab <- factor(Cover$Reg.Hab, levels = c("NPSDT _ P", "NPSDT _ PIN", "NPSDT _ OD", "FKNMS _ P", "FKNMS _ OS", "FKNMS _ OD",
+                                                  "SECREMP _ Nearshore", "SECREMP _ Inner", "SECREMP _ Middle", 
+                                                  "SECREMP _ Outer"))
+unique(Cover$Reg.Hab)  
+str(Cover)
+summary(Cover)
+```
+# Modeling Octocoral Cover
+Here I follow the same model structure that has been developed for the density and biomass data. The difference here is that I run models using 'family = binomial', and the model takes into account the number of points per image as weights. 
+
+### Model selection 
+```{r Cover Model Selection, message=TRUE, warning=FALSE}
+cover_full_model = glmmTMB(all_branch ~ fYear * Subregion+Depth+Reg.Hab+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points, family = binomial, data = Cover)
+
+
+cover_Year <- glmmTMB(all_branch ~ as.numeric(fYear) + (1|SiteID/StationID),
+                                  weights = points,family = binomial,data=
+                                  Cover)
+
+cover_depth.intercation <- glmmTMB(all_branch ~ fYear * Depth+ (1|SiteID/StationID),
+                       weights = points,family = binomial,data = Cover)
+
+
+cover_depthgroup <- glmmTMB(all_branch ~ fYear * Depth_group +              
+                                 (1|SiteID/StationID),
+                                 weights = points,family = binomial,data = 
+                                Cover)
+                              
+cover_Subregion1 <- glmmTMB(all_branch ~ fYear * Subregion+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover)
+
+cover_Subregion2 <- glmmTMB(all_branch ~ fYear + Subregion+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover)
+
+cover_Subregion_depth <- glmmTMB(all_branch ~ fYear * Subregion+Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover)
+
+cover_Subregion4 <- glmmTMB(all_branch ~ fYear * Subregion+Reg.Hab+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover)
+
+cover_ProjectRegion1 <- glmmTMB(all_branch ~ fYear * ProjectRegion +(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover)
+
+cover_ProjectRegion2 <-  glmmTMB(all_branch ~ fYear + ProjectRegion +(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover)
+cover_ProjectRegion_depth <-  glmmTMB(all_branch ~ fYear * ProjectRegion +Depth+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover)
+cover_ProjectRegion4 <- glmmTMB(all_branch ~ fYear * Subregion+Reg.Hab+(1|SiteID/StationID), control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)),weights = points,
+                                                    family = binomial, 
+                                                    data = Cover)
+
+
+cover_reg.hab <- glmmTMB(all_branch ~ fYear * Reg.Hab+(1|SiteID/StationID),
+                                 family = binomial, weights = points, 
+                                 data = Cover)
+
+cover_reg.hab2 <- glmmTMB(all_branch ~ fYear * Reg.Hab+Depth + 
+                                (1|SiteID/StationID),
+                                 family = binomial, weights = points, 
+                                 data = Cover)
+                              
+cover_null <- glmmTMB(all_branch ~  + 1,weights = points,
+                                                    family = binomial, 
+                                                    data = Cover)
+```
+Two models were found with lowest AIC 
+cover_reg.hab AND cover_reg.hab2 with less than 2 difference
+
+```{r AIC, echo=FALSE}
+### Updated Model Comparison with AIC
+
+AICtab(cover_full_model,
+       cover_depth.intercation,
+       cover_depthgroup,
+       cover_Subregion1,
+       cover_Subregion2,
+       cover_Subregion_depth,
+       cover_Subregion4,
+       cover_ProjectRegion1,
+       cover_ProjectRegion2,
+       cover_ProjectRegion_depth,
+       cover_ProjectRegion4,
+       cover_Year,
+       cover_reg.hab,
+       cover_reg.hab2,
+       cover_null)
+
+```
+
+### Model Summary 
+Summaries of both best model show more or less the same thing. In the second model Depth is not significant, , therefore this model is less accurate and not needed.
+
+```{r Model summary, echo=FALSE}
+summary(cover_reg.hab) #estimates and SE look fine, decent bit of variance between sites and stations although not too high in the conditional R2
+r2(cover_reg.hab)
+
+summary(cover_reg.hab2) # second best, however depth, which is the only difference between the two best models, is very far from being significant 
+```
+### Model validation 
+Validation of the best model - cover_reg.hab using the DHarma package
+```{r Model validation, echo=FALSE, message=FALSE, warning=FALSE}
+cover_simulationOutput <- simulateResiduals(cover_reg.hab , n = 1000, plot = TRUE,quantreg = T) 
+# Dispersion is OK, model has issues with outlier, uniformity and homogeneity
+
+testOutliers(cover_simulationOutput, type = "bootstrap") #OUTLIeR test significant: This can be a problem!
+
+plotResiduals(cover_simulationOutput, Cover$Reg.Hab) #DRTO P, PIN, and SECREMP inner the issues
+plotResiduals(cover_simulationOutput, Cover$fYear) #year is fine
+
+res <- recalculateResiduals(cover_simulationOutput, group = Cover$Year)
+testTemporalAutocorrelation(simulationOutput = res, time = unique(Cover$Year)) #no problems
+
+res2 <- recalculateResiduals(cover_simulationOutput, group = Cover$SiteID)
+plot(res2) #looks fine with recalculated residuals suggesting we are appropriately accounting for the overdispersion with the site level random effect. 
+
+```
+
+Plot out the data to visually compare with GLMM results and check linearity 
+
+```{r echo=FALSE}
+Cover %>% group_by(Reg.Hab) %>%
+  summarise(Mean = mean(all_branch))
+
+ggplot(Cover, aes(x = Year, y = all_branch))+
+  geom_point()+
+  geom_smooth()+
+  facet_wrap(~Reg.Hab)
+```
+looks reasonably linear - there are generally equal numbers of sites above and below the mean, temporal pattern isn't too wiggly
+
+### Post Hoc for the best model
+note esimates are on the logit scale - positive means the first of the 2 options is more likely (i.e., has higher cover), negative means less likely to happen (i.e., there been an increase in cover from x to y)
+
+```{r Post Hoc1 , echo=FALSE}
+r2(cover_reg.hab2) #conditional 0.096, marginal = 0.05
+#not explaining that much, but not much can be done without modelling site level differences explicitly which is beyond the scope of this study. 
+
+#post hoc of temporal changes within habitats
+cover_emm.year.hab <- emmeans(cover_reg.hab, ~fYear|Reg.Hab)
+pairs(cover_emm.year.hab)
+
+contrast(cover_emm.year.hab)
+
+plot(cover_emm.year.hab)+
+      theme_bw()+
+  theme(legend.position = c(0.92, 0.2),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12),
+        plot.title = element_text(hjust = 0.1),
+        axis.title.y = element_text(size = 14),
+        axis.text.y = element_text(size = 12, hjust = 1, colour = "black"),  
+        axis.text.x = element_text(size = 12, colour = "black"), 
+        axis.title.x = element_text(size = 14), 
+        axis.line = element_line(size = 0.5), 
+        axis.ticks = element_blank(),
+        plot.margin = ggplot2::margin(12,6),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 5))
+```
+model estimates, comparisons and contrasts look reasonable based upon the data. 
+
+```{r Post Hoc2, eval=FALSE, include=FALSE}
+#opposite post hoc - compare habitats within years
+#currently not running
+emm.hab <- emmeans(cover_reg.hab, ~Reg.Hab|fYear)
+pairs(emm.hab)
+plot(emm.hab)+
+      theme_bw()+
+  theme(legend.position = c(0.92, 0.2),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12),
+        plot.title = element_text(hjust = 0.1),
+        axis.title.y = element_text(size = 14),
+        axis.text.y = element_text(size = 12, hjust = 1, colour = "black"),  
+        axis.text.x = element_text(size = 12, colour = "black"), 
+        axis.title.x = element_text(size = 14), 
+        axis.line = element_line(size = 0.5), 
+        axis.ticks = element_blank(),
+        plot.margin = ggplot2::margin(12,6),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(size = 5))
+```
+

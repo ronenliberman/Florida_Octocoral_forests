@@ -1,0 +1,387 @@
+# Octocoral Density 
+
+This markdown file was prepared for analyzing octocoral density data. We are using a dataframe that was prepared using another code, in a previous script. 
+The code below cleans the data a little bit, then test for best fit model using model selection test for the most significant parameters that influence state of octocoral community during 2013-2023.
+
+
+### Data prep. for modelling
+Here I filter the data so I can model density of Total population across years 2013 - 2023. The data was prepared in: "Creating_binding_all_datasets.R"
+
+```{r eval=FALSE, include=FALSE}
+#dat <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/all_density_and_heights_by_stationID.csv")
+
+dat <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/all_density_and_heights_by_stationID_v2.csv")
+head(dat)
+
+levels(factor(dat$Subregion))
+levels(factor(dat$Habitat))
+levels(factor(dat$Site_name))
+
+# Here i test what should be the rangesof the data depth-groups based on number of rows 
+# Filter the data for SPP_CODE == "TOCT"
+TOCT_data <- dat %>% 
+  filter(SPP_Code == "TOCT")
+
+# Convert Depth to numeric (if not already done)
+TOCT_data$Depth <- as.numeric(as.character(TOCT_data$Depth))
+
+# Plot the distribution of data by Depth
+ggplot(TOCT_data, aes(x = Depth)) +
+  geom_bar(fill = "lightblue", color = "black") +
+  labs(title = "Distribution of Data by Depth for SPP_CODE - TOCT", x = "Depth", y = "Number of Rows") 
+
+
+# Calculate quartiles for the Depth variable
+quartiles <- TOCT_data %>%
+  summarise(Q1 = quantile(Depth, 0.25),
+            Median = quantile(Depth, 0.5),
+            Q3 = quantile(Depth, 0.75))
+
+# Create a frequency table of rows per depth
+depth_frequency <- TOCT_data %>%
+  group_by(Depth_group = cut(Depth, breaks = c(-Inf, quartiles$Q1, quartiles$Median, quartiles$Q3, Inf))) %>%
+  summarise(Frequency = n())
+
+# Rename the Depth_group variable for clarity
+depth_frequency$Depth_group <- gsub("\\(|\\]", "", as.character(depth_frequency$Depth_group))
+
+# Assign data groups according to the frequncy found above. 
+dat_4groups <- dat %>% 
+  mutate(Depth_group = case_when(
+    Depth < 21 ~ "Shallow",
+    Depth >= 21 & Depth < 28 ~ "Mid-shallow", Depth >= 28 & Depth < 45  ~ "Mid-deep",
+    Depth >= 45 ~ "Deep"
+  ))
+
+#visualize
+dat_4groups %>% filter(SPP_Code == "TOCT") %>%  ggplot(aes(x = Depth_group, fill = Depth_group)) +
+  geom_bar() +
+  labs(title = "Frequency of Observations in Each Depth Group", x = "Depth Group", y = "Frequency") 
+# ok , this makes some sense. 
+
+#Generate the dataset
+Total.octo <- dat_4groups %>% filter(SPP_Code == "TOCT") 
+# check the number of unique ProjectRegion 
+Total.octo %>% 
+  distinct(ProjectRegion ) 
+
+# make NPSDT the only DT ProjectRegion 
+Total.octo <- Total.octo %>%
+  mutate(ProjectRegion = ifelse(ProjectRegion == "NPSDT/FKNMS", "NPSDT", ProjectRegion))
+
+Total.octo %>% 
+  distinct(Habitat) 
+
+#Here I explore a bit the outlliars in my data, some zero's, some low counts in specific sites 
+#test for zero density values
+#Looking at density 
+Total.zero <- Total.octo %>% filter(density == "0")
+
+# Creating a list of sites that should be omitted from the datasets 
+omit_sites <- c("Martin County 1" ,"Martin County 2","Davis Rock","Palm Beach 1","Red Dun Reef","Palmata Patch","Loggerhead Patch", "Texas Rock","Broward County A")
+
+Total.octo.density_no_2012 <- dat_4groups %>% 
+  filter(SPP_Code == "TOCT") %>% 
+  mutate(ProjectRegion = ifelse(ProjectRegion == "NPSDT/FKNMS", "NPSDT", ProjectRegion)) %>% 
+  mutate(ProjectRegion = ifelse(Subregion == "DT", "NPSDT", ProjectRegion)) %>% 
+  filter(!(Site_name %in% omit_sites)) %>% 
+  filter(Year != "2012") %>%
+  mutate(Habitat = case_when(
+    Site_name == "The Maze" ~ "PIN",
+    Site_name == "White Shoal" ~ "P",
+    Site_name == "Prolifera Patch" ~ "P",
+    Site_name == "Temptation Rock" ~ "PIN",
+    Site_name == "Mayer's Peak" ~ "PIN",
+    Site_name == "Bird Key Reef" ~ "OD",
+    Site_name == "Black Coral Rock" ~ "PIN",
+    TRUE ~ Habitat  # Retain original value if no condition is met
+  )) %>% 
+  mutate(SiteID = as.factor(SiteID),
+         StationID = as.factor(StationID),
+         Year = as.factor(Year),
+         counts = (10 * density))
+
+write.csv(file= "~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/octo_density.csv", Total.octo.density_no_2012)
+```
+
+raw data visualization 
+
+```{r histogram, echo=FALSE}
+Total.octo_no_2012 <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/octo_density.csv")
+
+#view(Total.octo_no_2012)
+
+# look at the frequency of counts 
+
+hist(Total.octo_no_2012$counts, breaks=50, xlab = "density", main = NULL, freq = TRUE) 
+
+#round density for avoiding non-integer issues with poisson or nbinom. 
+Total.octo_no_2012$offset <- 10
+
+Total.octo_no_2012$Reg.Hab <- paste(Total.octo_no_2012$ProjectRegion, "_", Total.octo_no_2012$Habitat)
+Total.octo_no_2012$Year <- as.factor(Total.octo_no_2012$Year)
+Total.octo_no_2012$Reg.Hab <- as.factor(Total.octo_no_2012$Reg.Hab)
+Total.octo_no_2012$Habitat <- as.factor(Total.octo_no_2012$Habitat)
+Total.octo_no_2012$Subregion <- as.factor(Total.octo_no_2012$Subregion)
+Total.octo_no_2012$ProjectRegion <- as.factor(Total.octo_no_2012$ProjectRegion)
+Total.octo_no_2012$Depth_group <- as.factor(Total.octo_no_2012$Depth_group ) 
+#check if needed
+#unique(Total.octo_no_2012$Site_name)
+#unique(Total.octo_no_2012$Reg.Hab)
+str(Total.octo_no_2012)
+```
+
+# Modeling octocoral density
+
+Using different models I can examine the most significant factors affecting Total octocoral abundance. I am using count data and different explanatory varables. I am using a model selection method using the AIC parameter to select for the best model. 
+Afterwards I am running a model validation functions on the best model. 
+
+
+Testing different distributions - best fit distribution using NBINOM2 dist. 
+```{r }
+#check distribution
+poisson_full = glmmTMB(counts ~ Year * Subregion+Depth+Reg.Hab+(1|SiteID/StationID),
+                          family = poisson, 
+                          data = Total.octo_no_2012)
+poisson_full <- update(poisson_full, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+nbinom1_full = glmmTMB(counts ~ Year * Subregion+Depth+Reg.Hab+(1|SiteID/StationID),
+                          family = nbinom1,
+                          data = Total.octo_no_2012)
+nbinom1_full <- update(nbinom1_full, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+nbinom2_full = glmmTMB(counts ~ Year * Subregion+Depth+Reg.Hab+(1|SiteID/StationID),
+                          family = nbinom2, 
+                          data = Total.octo_no_2012)
+nbinom2_full <- update(nbinom2_full, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+AIC(poisson_full, nbinom1_full, nbinom2_full)
+###nbinom2 best
+```
+
+### Model selection
+```{r}
+#nbinom_glmm_full_model <- update(nbinom_glmm_full_model, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+density_Year <- glmmTMB(counts ~ as.numeric(Year) + (1|SiteID/StationID),
+                                 family = nbinom2, 
+                                 data = Total.octo_no_2012)
+#nbinom_glmm_model_Year <- update(nbinom_glmm_model_Year, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+density_depth_interaction <- glmmTMB(counts ~ Year * Depth+ (1|SiteID/StationID),
+                      family = nbinom2, 
+                      data = Total.octo_no_2012)
+#density_depth_interaction <- #update(density_depth_interaction, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+density_depthgroup <- glmmTMB(counts ~ Year * Depth_group + (1|SiteID/StationID),
+                                 family = nbinom2, 
+                                 data = Total.octo_no_2012)
+#density_depthgroup <- update(density_depthgroup, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+
+density_Subregion1 <- glmmTMB(counts ~ Year * Subregion+(1|SiteID/StationID),
+                               family = nbinom2, 
+                                data = Total.octo_no_2012)
+
+
+density_Subregion2 <- glmmTMB(counts ~ Year + Subregion+(1|SiteID/StationID),
+                                 family = nbinom2, 
+                                 data = Total.octo_no_2012)
+  #  density_Subregion2 <- update(density_Subregion2, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))                    
+         
+density_Subregion_depth <- glmmTMB(counts ~ Year * Subregion+Depth + (1|SiteID/StationID),
+                                 family = nbinom2, 
+                                 data = Total.octo_no_2012)   
+density_Subregion_depth <- update(density_Subregion_depth, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+density_Subregion4 <- glmmTMB(counts ~ Year * Subregion+Reg.Hab+(1|SiteID/StationID),
+                                 family = nbinom2, 
+                                 data = Total.octo_no_2012)
+
+density_ProjectRegion1 <- glmmTMB(counts ~ Year * ProjectRegion+(1|SiteID/StationID),
+                                 family = nbinom2, 
+                                 data = Total.octo_no_2012)
+#density_ProjectRegion1 <- update(density_ProjectRegion1, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+density_ProjectRegion2 <- glmmTMB(counts ~ Year + ProjectRegion+(1|SiteID/StationID),
+                                 family = nbinom2, 
+                                 data = Total.octo_no_2012)
+#nbinom_glmm_model_ProjectRegion2 <- update(nbinom_glmm_model_ProjectRegion2, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+density_ProjectRegion3 <- glmmTMB(counts ~ Year * ProjectRegion+Depth+(1|SiteID/StationID),
+                                 family = nbinom2, 
+                                 data = Total.octo_no_2012)
+
+density_ProjectRegion4 <- glmmTMB(counts ~ Year * ProjectRegion+Reg.Hab+(1|SiteID/StationID),
+                                 family = nbinom2, 
+                                 data = Total.octo_no_2012)
+
+density_reg.hab <- glmmTMB(counts ~ Year * Reg.Hab+(1|SiteID/StationID),
+                                 family = nbinom2, 
+                                 data = Total.octo_no_2012)
+
+density_reg.hab2 <- glmmTMB(counts ~ Year * Reg.Hab+Depth+(1|SiteID/StationID),
+                                 family = nbinom2, 
+                                 data = Total.octo_no_2012)
+
+density_reg.hab2 <- update(density_reg.hab2, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+
+density_null <- glmmTMB(counts ~  + 1,
+                           family = nbinom2, 
+                            data = Total.octo_no_2012)
+```
+
+### Model comparison
+```{r echo=FALSE}
+### Model comparison
+
+AICtab(nbinom2_full,
+       density_Year,
+       density_depth_interaction,
+       density_depthgroup,
+       density_Subregion1,
+       density_Subregion2,
+       density_Subregion_depth,
+       density_Subregion4,
+       density_ProjectRegion1,
+       density_ProjectRegion2,
+       density_ProjectRegion3,
+       density_ProjectRegion4,
+       density_reg.hab,
+       density_reg.hab2,
+       density_null)  
+
+```
+
+**Summary of best model**
+
+The model that explains the variation of count data ~ Year * Region.Habitat is the FAVORITE. 
+
+```{r echo=FALSE, warning=TRUE}
+Best_model <- density_reg.hab
+summary(density_reg.hab) #Year 2018,2020-2022 sign
+
+r2(Best_model) #0.265, 0.9; fit is very good with the random effects; 
+
+```
+
+**Summary of best model2**
+```{r echo=FALSE, warning=TRUE}
+Best_model.2 = density_reg.hab2
+summary(density_reg.hab2)
+r2(density_reg.hab2)
+```
+
+### Model validation
+
+**Visualizing residuals**
+
+Plotting residuals vs. fitted shows more or less the same result.
+
+```{r echo=FALSE}
+# Check for residual pattern within groups and difference between groups     
+xyplot(residuals(Best_model) ~ fitted(density_reg.hab),
+       panel=function(x, y){
+         panel.xyplot(x, y)
+         panel.loess(x, y, span = 3)
+         panel.lmline(x, y, lty = 2)  # Least squares broken line
+       }
+)
+```
+There is some high variation in the residuals - this probably creating the outliars and dispersion problems in the models. 
+**We will try to reduce the outliars by removing some marginals locations. **
+
+### Validation of Best model
+Here I use the DHarMA package to validate my best model 
+QQ plot is on the red line, but still there is a significant result in the uniformity test. 
+As it stands, the model is almost validated, but it seems some there is an indication of issues with the uniformity of the data. 
+
+```{r echo=TRUE}
+simulationOutput <- simulateResiduals(Best_model, n = 1000, plot = TRUE,quantreg = T) #check both best models, best.mod has a better uniformity than best mod.2
+
+#best.mod looks pretty good, uniformity slightly off, but not too bad, some evidence of heterogeneity, recalculate residuals to check
+testDispersion(simulationOutput) #dispersion fine for both models
+```
+
+Validation per group - I examine individual groups in the dataset. #recalculating residuals , as I might have too many samples for Dharma to calculate, grouping by site, Year, or Subregion
+
+### Model validation of Residuals 
+Site - this parameter has enough data point and therefore can be a good one to look into. All parameters are non significant
+
+```{r}
+resids.site <- recalculateResiduals(simulationOutput, group = Total.octo_no_2012$SiteID)
+plot(resids.site) # heterogeneity good, uniformity improved, suggests an outlier
+
+testResiduals(resids.site) #residuals uniform, dispersion fine, evidence of outliers, try bootstrap as per Florian Hartig vignette advice
+testOutliers(resids.site, type = "bootstrap") #suggests after bootstrapping that residuals are fine
+testDispersion(resids.site) #dispersion fine
+
+```
+### Test for temporal autocorrelation
+
+evidence of temporal autocorrelation (error term in year n is a function of the error in year n-1: suggest fitting an ar1 autocorrelation structure, this is present in the full residuals and the refitted residuals
+
+```{r}
+res <- recalculateResiduals(simulationOutput, group = Total.octo_no_2012$Year)
+testTemporalAutocorrelation(simulationOutput = res, time = unique(Total.octo_no_2012$Year))
+```
+
+Account for temporal autocorrelation
+Include ar1 structure to account for temporal autocorrelation
+
+```{r}
+Best_model.ar1 <- glmmTMB(counts ~ Year * Reg.Hab+(1|SiteID/StationID) +
+                            ar1(Year-1|StationID),
+                                 family = nbinom2, data = Total.octo_no_2012)
+Best_model.ar1 <- update(Best_model.ar1, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+AIC(Best_model, Best_model.ar1) #improved AIC with ar1
+
+summary(Best_model.ar1)
+```
+
+**calculate r2, assess model estimates between ar1 adn no ar1 models**
+
+Summaries look pretty similar - best_model.ar1 has very low variance accounted for by station intercept but that's likely because it's accounted for in the ar1 temporal autocorrelation structure
+```{r}
+#not possible to calculate r2 with the ar1 added so compute on fitted model
+r2(Best_model) #conditional r2 = 0.9, marginal  = 0.265
+
+summary(Best_model)
+
+summary(Best_model.ar1)
+
+ #estimates ar1 correlation coefficient at 0.93 - this is very high - I suspect it's not actually needed given the random intercept specified and time being incorporated into the model, but after reading online and Zuur et al 2009 it is suggested to be incorporated when there is temporal autocorrelation. I'll check model estimates between the models with and without AR1 anyway 
+
+#Dharma tests residuals on the fixed effects so no need to re validate model, will check acf
+
+#FYI ar1(Year-1) and ar1(Year+0) are equivalent and give the same estimates
+
+```
+
+### Post hoc analysis of fitted factors 
+
+```{r Density:post hoc, echo=FALSE}
+#calculated estimated marginal means and outputs estimates on the log scale
+emm.year.hab <- emmeans(Best_model.ar1, ~ Year|Reg.Hab) #compares years within habitat
+pairs(emm.year.hab) #significant positive ratio estimate means octo abundance in year x is greater than in year y, significant negative means sig decline between year x and year y
+contrast(emm.year.hab) #compares estimate for the year against the mean for that habitat
+plot(emm.year.hab)
+
+emm.hab.year <- emmeans(Best_model.ar1, ~ Reg.Hab|Year) #does the opposite, will compare habitats within years
+pairs(emm.hab.year)
+contrast(emm.hab.year)
+plot(emm.hab.year)
+```
+
+Marginal emmeans for each fixed factor
+```{r eval=FALSE, include=FALSE}
+emm.hab <- emmeans(Best_model.ar1, ~ Reg.Hab)
+pairs(emm.hab)
+contrast(emm.hab) #all pretty similar
+
+emm.year <- emmeans(Best_model.ar1, ~ Year)
+pairs(emm.year)
+contrast(emm.year)
+```

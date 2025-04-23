@@ -1,0 +1,2179 @@
+In this part I am visualizing the data according to the results of our final models. This markdown will generate the figures in the manuscript "Octocoral dynamics across Florida's Coral Reef during 2013-2023
+
+```{r setup visualization, include=FALSE}
+knitr::opts_knit$set(root.dir = "~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/")
+```
+
+```{r load libraries, include=FALSE}
+library(scales)
+library(tidyverse)
+library("knitr")
+library("gridExtra")
+library("ggpubr")
+library("data.table")
+library(glmmTMB)
+library(emmeans)
+library(bbmle)
+library(performance)
+library(ggplot2)
+library(plotrix)
+library(gridExtra)
+library(ggh4x)
+library(patchwork)
+```
+
+### Data prep. for visualiztion 
+
+```{r}
+# Build a df for density and cover 
+
+Cover_dat <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/Cover_All.csv")
+
+#get metadata - not needed now
+
+#transect_meta <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/raw_data/StationMetadata_corrected_habitatid.csv")
+
+density_dat <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/all_density_and_heights_by_stationID_v2.csv")
+#head(dat)
+
+# Creating a list of sites that should be omitted from the datasets 
+omit_sites <- c("Martin County 1" ,"Martin County 2","Davis Rock","Palm Beach 1","Red Dun Reef","Palmata Patch","Loggerhead Patch", "Texas Rock","Broward County A")
+
+#modify density data 
+density_dat <- density_dat %>% filter(SPP_Code == "TOCT") %>% 
+  mutate(ProjectRegion = ifelse(ProjectRegion == "NPSDT/FKNMS", "NPSDT", ProjectRegion)) %>% 
+  mutate(ProjectRegion = ifelse(Subregion == "DT", "NPSDT", ProjectRegion)) %>%
+  filter(!(Site_name %in% omit_sites)) %>% 
+  filter(Year!= "2012") %>% 
+  mutate(Habitat = case_when(                    ### some sites are actually diffrent habitat, change those sites
+    Site_name == "The Maze" ~ "PIN",
+    Site_name == "White Shoal" ~ "P",
+    Site_name == "Prolifera Patch" ~ "P",
+    Site_name == "Temptation Rock" ~ "PIN",
+    Site_name == "Mayer's Peak" ~ "PIN",
+    Site_name == "Bird Key Reef" ~ "OD",
+    Site_name == "Black Coral Rock" ~ "PIN",
+    TRUE ~ Habitat  # Retain original value if no condition is met
+  )) %>% 
+  mutate(SiteID = as.factor(SiteID),
+         StationID = as.factor(StationID),
+         Year =  as.factor(Year)) %>% 
+  rename(
+    Date = Date.x)
+  
+#can we combine cover and total pop. density?  
+length(unique(density_dat$Site_name))#45
+length(unique(density_dat$StationID)) #179
+#view(dat.df)
+
+# Similar to modeling data ! Thus we can combine both. 
+
+# col to keep 
+relevant_col <- c("Year" ,"Subregion" ,"Habitat","SiteID" ,"Site_name", "StationID" ,
+                  "ProjectRegion","n","Reg.Hab" ,"Depth","density")
+
+### merge both cover and density data 
+
+# Step 1: Rename columns in Cover_dat to match dat.df
+Cover_dat_renamed <- Cover_dat %>%
+  rename(
+    Date = ImageDate,
+    Site_name = SiteName,
+    Site.Code = SiteCode
+  )
+ 
+#make modifications before merging
+head(Cover_dat_renamed)
+Cover_dat_modified<- Cover_dat_renamed %>% 
+  mutate(ProjectRegion = ifelse(ProjectRegion == "NPSDT/FKNMS", "NPSDT", ProjectRegion)) %>% 
+  mutate(ProjectRegion = ifelse(Subregion == "DT", "NPSDT", ProjectRegion)) %>% 
+  filter(!(Site_name %in% omit_sites)) %>% 
+  mutate(Habitat = case_when(
+    Site_name == "The Maze" ~ "PIN",
+    Site_name == "White Shoal" ~ "P",
+    Site_name == "Prolifera Patch" ~ "P",
+    Site_name == "Temptation Rock" ~ "PIN",
+    Site_name == "Mayer's Peak" ~ "PIN",
+    Site_name == "Bird Key Reef" ~ "OD",
+    Site_name == "Black Coral Rock" ~ "PIN",
+    TRUE ~ Habitat  # Retain original value if no condition is met
+  )) %>% 
+  mutate(SiteID = as.factor(SiteID),
+         StationID = as.factor(StationID),
+         Year =  as.factor(Year)) 
+
+  Cover_dat_modified$StationID <- as.factor(Cover_dat_modified$StationID)
+  Cover_dat_modified$SiteID <- as.factor(Cover_dat_modified$SiteID)
+
+#  Summerize per region
+  
+  #density:
+  density_selected <- density_dat[, intersect(names(density_dat), relevant_col)]
+  head(density_selected)
+  density_selected$ProjectRegion <- trimws(density_selected$ProjectRegion)
+  density_selected$Habitat <- trimws(density_selected$Habitat)
+  
+  # create Reg,Hab 
+  density_selected$Reg.Hab <- as.factor(paste(density_selected$ProjectRegion, "_", density_selected$Habitat))
+ 
+   # Verify the unique values in the new factor
+  unique(density_selected$Reg.Hab) # should be 10 unique reg,hab
+  
+#cover:
+  relevant_col.cover <- c("Year", "Date", "Subregion", "Habitat", "SiteID", "Site_name", "StationID",
+                          "ProjectRegion", "Depth", "BOCT",     "EOCT", "GVEN", "OCTO") #different than rel.col used in density 
+  cover_selected <- Cover_dat_modified[, intersect(names(Cover_dat_modified), relevant_col.cover)]
+
+  cover_selected$ProjectRegion <- trimws(cover_selected$ProjectRegion)
+  cover_selected$Habitat <- trimws(cover_selected$Habitat)
+  
+  # create Reg,Hab 
+  cover_selected$Reg.Hab <- as.factor(paste(cover_selected$ProjectRegion, "_", cover_selected$Habitat))
+  
+# Verify the unique values in the new factor
+  unique(cover_selected$Reg.Hab) # 10 reg.hab <- good
+  
+## Add all branching column ### - this is a change following advise from co authors. Here I add GVEN density to the density of branching octocoral to generate a column for all arborescent gorgs,
+
+  # create arborescent gorgonain coloumn which is branching + G. ventalina data 
+cover_selected$all_Branch <- cover_selected$BOCT + cover_selected$GVEN
+
+# view(cover_df_selected)
+  
+```
+## Making the manuscript's figures 
+#### Figure 2 - Plotting Cover and density per Reg:Hab on one plot 
+```{r}
+#generate summary for each group by Year and Reg.Hab
+
+#Density
+  Sum_density_Reg.Hab <- density_selected %>%
+    group_by(Year, Reg.Hab ) %>%
+    summarize(
+      mean_density = mean(density, na.rm = TRUE), 
+      sd_density  = sd(density, na.rm = TRUE), 
+      median_density  = median(density),
+      n_stations  = n(),
+      .groups = 'drop'  # drop grouping after summarization
+    ) %>%
+    ungroup() %>% 
+    mutate(se_density  = sd_density / sqrt(n_stations))
+
+#COVER data:
+  
+  Sum_OCTO_cover_Reg.Hab<- cover_selected %>%
+    group_by(Year, Reg.Hab) %>%
+    summarize(
+      mean_cover = mean(all_Branch, na.rm = TRUE), 
+      sd_cover  = sd(all_Branch, na.rm = TRUE), 
+      median_cover = median(all_Branch),
+      n_stations  = n(),
+      .groups = 'drop'  # drop grouping after summarization
+    ) %>%
+    ungroup() %>% 
+    mutate(se_cover = sd_cover/ sqrt(n_stations))
+  
+  Sum_OCTO_cover_Reg.Hab
+ 
+  str(Sum_OCTO_cover_Reg.Hab)
+ str(Sum_density_Reg.Hab)
+ 
+ unique(Sum_OCTO_cover_Reg.Hab$Reg.Hab)
+ unique(Sum_density_Reg.Hab$Reg.Hab)
+ 
+ # Remove extra spaces in the column names of Sum_density_Reg.Hab
+ colnames(Sum_density_Reg.Hab) <- gsub("\\s+", "", colnames(Sum_density_Reg.Hab))
+ 
+ # Remove extra spaces in the column names of Sum_OCTO_cover_Reg.Hab
+ colnames(Sum_OCTO_cover_Reg.Hab) <- gsub("\\s+", "", colnames(Sum_OCTO_cover_Reg.Hab))
+ 
+ # Merge the data frames after fixing the column names
+
+ #To merge both df we need to have similar format for all col. Therefore,we need Convert Year to integer in both dataframes
+ Sum_density_Reg.Hab <- Sum_density_Reg.Hab %>%
+   dplyr::mutate(Year = as.integer(as.character(Year)))
+ #view(Sum_density_regional)
+ Sum_OCTO_cover_Reg.Hab <- Sum_OCTO_cover_Reg.Hab %>%
+   dplyr::mutate(Year = as.integer(as.character(Year)))
+ 
+
+merged_Reg.Hab <- left_join(Sum_density_Reg.Hab, Sum_OCTO_cover_Reg.Hab, by = c("Year", "Reg.Hab"))
+ 
+  head(merged_Reg.Hab)
+ # view(merged_Reg.Hab)
+# Calculate the coefficient to scale mean_cover to a similar range as mean_density -not using at the moment
+
+  
+# Create a named vector for facet labels
+  Reg.Hab_labels <- c(
+    `FKNMS _ OD` = "FK Deep Forereef", 
+    `FKNMS _ OS` = "FK Shallow Forereef", 
+    `FKNMS _ P` = "FK Patch", 
+    `SECREMP _ Inner` = "SEFL Inner",  
+    `SECREMP _ Middle` = "SEFL Middle", 
+    `SECREMP _ Nearshore` = "SEFL Nearshore", 
+    `SECREMP _ Outer` = "SEFL Outer",
+    `NPSDT _ OD` = "DRTO Deep Forereef", 
+    `NPSDT _ P` = "DRTO Patch",
+    `NPSDT _ PIN` = "DRTO Pinnacle"
+  )
+  
+  coeff = 100 #my coeff
+  
+  # Convert Year to integer 
+merged_Reg.Hab <- merged_Reg.Hab %>%
+mutate(Year = as.integer(as.character(Year)))
+
+  # Relevel the factor
+merged_Reg.Hab$Reg.Hab <- factor(
+  merged_Reg.Hab$Reg.Hab,
+  levels = c( "SECREMP _ Nearshore","SECREMP _ Inner", "SECREMP _ Middle", "SECREMP _ Outer", 
+             "FKNMS _ P", "FKNMS _ OS", "FKNMS _ OD", 
+             "NPSDT _ P", "NPSDT _ PIN", "NPSDT _ OD")
+)
+
+
+```
+
+```{r}
+# Verify the updated levels
+levels(merged_Reg.Hab$Reg.Hab)
+
+#create a manual faccet design
+mat <- matrix(c(1, 1, 2, 2, 3, 3, 4,4,
+                5, 5, 6, 6,7,7,NA,NA, 
+                8, 8, 9, 9,10,10,NA,NA)
+              ,3,8,byrow = TRUE)
+
+# Reproduce the plot with the updated dataset
+p_Reg.Hab <- ggplot(merged_Reg.Hab, aes(x = Year)) +
+  
+  # Add ribbon for standard error of mean cover (primary y-axis)
+  geom_ribbon(aes(ymin = mean_cover* coeff - se_cover* coeff, ymax = mean_cover* coeff + se_cover* coeff), 
+              fill = "orange", alpha= 0.2) +
+  
+  # Add line for mean cover (primary y-axis)
+  geom_line(aes(y = mean_cover * coeff, color = "Percent Cover"), 
+            linewidth = 1.4, alpha = 0.8) +
+  
+  # Add ribbon for standard error of mean density (secondary y-axis)
+  geom_ribbon(aes(ymin = (mean_density - se_density), ymax = (mean_density + se_density)), 
+              fill = "skyblue", alpha = 0.2) +
+  
+  # Add line for mean density (secondary y-axis)
+  geom_line(aes(y = mean_density, color = "Mean Density"), 
+            linewidth = 1.4, alpha = 0.8) +
+  
+  # Scale y-axis: primary for mean cover, secondary for mean density
+  scale_y_continuous(
+    name = expression(bold("Octocoral cover (%)")),
+    sec.axis = sec_axis(~ ., name = expression(bold("Octocoral density (m"^2*")")))
+  ) +
+  
+  # Customize the x-axis
+  scale_x_continuous(breaks = seq(2013, 2024, by = 2), limits = c(2013, 2024)) +
+  
+  # Custom colors for legend
+  scale_color_manual(
+    values = c( "Percent Cover" = "darkorange2", "Mean Density" = "dodgerblue3",
+    name = "")
+  ) +
+  
+  # Divide plot into facets using the manual order and modified labels
+  facet_manual(vars(Reg.Hab),labeller = as_labeller(Reg.Hab_labels), design = mat)+
+  #facet_wrap(~ Reg.Hab, labeller = as_labeller(Reg.Hab_labels), ncol = 4) +
+  
+  # Apply a minimal theme with customizations
+  theme_pubclean() +
+  theme(
+    legend.title=element_blank(),
+    legend.position = "inside", legend.position.inside = c(0.92, 0.2),       
+    legend.margin = margin(t = 10),
+    legend.background = element_blank(),
+    legend.text = element_text(size = 20),
+    axis.title.x = element_text(margin = margin(t = 15), face = "bold"),
+    axis.title.y = element_text(color = "black", face = "bold", size = 14, margin = margin(r = 15)),
+    axis.title.y.right = element_text(color = "black", face = "bold", size = 14, margin = margin(l = 15)),
+    axis.text.y = element_text(color = "black",size = 14),
+    axis.text.y.right = element_text(color = "black",size = 14),
+    axis.text.x = element_text(color = "black",size = 14,angle = 45, hjust = 1, vjust = 1),
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.spacing = unit(1.5, "lines"),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.margin = margin(5, 5, 5, 5),
+    plot.caption = element_text(hjust = 1, margin = margin(t = 15))
+  ) +
+  # Adjust the legend with reversed order
+  guides(color = guide_legend(reverse = TRUE, nrow = 2)) +
+  
+  # Add the x-axis label
+  labs(x = "Year") +
+  
+  # Prevent axis expansion
+  coord_cartesian(expand = FALSE)
+p_Reg.Hab
+
+# Incorporate additional vertical lines and annotations
+p_Reg.Hab_new_final <- p_Reg.Hab + 
+  geom_vline(xintercept = 2014, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2015, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2023.4, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2017.7, color = "gray50", linewidth = 2) +
+  geom_vline(xintercept = 2022.7, color = "gray50", linewidth = 2) +
+  annotate("text", x = 2013.8, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2014.8, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2023.9, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2017.5, y = 0.5, label = "Hurricane Irma", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2022.5, y = 0.5, label = "Hurricane Ian", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5)
+
+# Display the final plot
+p_Reg.Hab_new_final
+
+#Save if needed  
+ggsave(filename = "Fig2_Mean_Density_and_Cover_by_Reg_Hab_April6.jpg", plot = p_Reg.Hab_new_final, width = 14, height = 10.2, units = "in", dpi = 600)
+
+```
+
+#### Figure3 - Juvenile proportions in the population of target species per Regional habitat  
+```{r}
+#read file <-  "processed_juvenile and density of target species1.csv"
+FL.juv <- read.csv("~/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/processed_juvenile and density of target species1.csv")
+  
+#summarize                  
+summary_stats <- FL.juv %>%
+  group_by(Year, Reg.Hab) %>%
+  summarize(mean_juv_prop = mean(Juv_proportion ),
+            sd_prop = sd(Juv_proportion),
+            se_prop = sd(Juv_proportion) / sqrt(n()),
+            mean_target_density = mean(target_density),
+            sd_target_density = sd(target_density),
+            se_target_density = sd(target_density) / sqrt(n())) %>% 
+  ungroup() %>% 
+  mutate(Year = as.integer(as.character(Year))) # Convert Year to integer 
+
+# View the summary statistics
+summary_stats
+unique(summary_stats$Reg.Hab)
+
+# Relevel the factor
+summary_stats$Reg.Hab <- factor(
+  summary_stats$Reg.Hab,
+  levels = c("SECREMP _ Nearshore", "SECREMP _ Inner", "SECREMP _ Middle", "SECREMP _ Outer", 
+             "FKNMS _ P", "FKNMS _ OS", "FKNMS _ OD", 
+             "NPSDT _ P", "NPSDT _ PIN", "NPSDT _ OD")
+)
+
+# Check the new levels
+levels(summary_stats$Reg.Hab)
+```
+Generating the plot 
+```{r}
+#create a manual faccet design
+mat <- matrix(c(1, 1, 2, 2, 3, 3, 4,4,
+                5, 5, 6, 6,7,7,NA,NA, 
+                8, 8, 9, 9,10,10,NA,NA)
+              ,3,8,byrow = TRUE)
+
+p_target_density <- ggplot(summary_stats, aes(x = Year, group = Reg.Hab)) +
+  
+  # Add line for mean target density
+  geom_line(aes(y = mean_target_density, color = "Mean density of target spp."),
+            linewidth = 2, alpha = 0.8) +
+  
+  # Add ribbon for standard error of mean target density
+  geom_ribbon(aes(ymin = mean_target_density - se_target_density,
+                  ymax = mean_target_density + se_target_density),
+              fill = "skyblue", alpha = 0.3) +
+  
+  # Add points and error bars for mean juvenile proportion (scaled)
+  geom_point(aes(y = mean_juv_prop * coeff_ratio, 
+                 color = "Proportion of juveniles\nwithin target spp. populations"),  # Line break added here
+             size = 3) +
+  
+  geom_errorbar(aes(ymin = (mean_juv_prop - se_prop) * coeff_ratio,
+                    ymax = (mean_juv_prop + se_prop) * coeff_ratio,
+                    color = "Proportion of juveniles\nwithin target spp. populations"),  # Line break added here
+                width = 0.2, alpha = 0.7) +
+  
+  # Scale for y-axis
+  scale_y_continuous(
+    name = expression(bold("Mean target spp. density (m"^2*")")),
+    sec.axis = sec_axis(~ ., name = "Proportion of juveniles (%)")
+  ) +
+  
+  # Scale for x-axis
+  scale_x_continuous(breaks = seq(2013, 2024, by = 2), limits = c(2013, 2024)) +
+  
+  # Custom colors for the plot
+  scale_color_manual(values = c("Mean density of target spp." = "dodgerblue3", 
+                                "Proportion of juveniles\nwithin target spp. populations" = "darkorange2"),  # Line break added here
+                     name = "") +
+  
+  # Facet by the updated Reg.Hab
+  facet_manual(vars(Reg.Hab), labeller = as_labeller(Reg.Hab_labels), design = mat) +
+  
+  # Minimal publication-ready theme with customizations
+  theme_pubclean() +
+  theme(
+    legend.title = element_blank(),
+    legend.position = "inside", legend.position.inside = c(0.92, 0.2),       
+    legend.margin = margin(t = 10),
+    legend.background = element_blank(),
+      legend.text = element_text(size = 18, margin = margin(b = 15)), 
+    axis.title.x = element_text(margin = margin(t = 15), face = "bold"),
+    axis.title.y = element_text(color = "black", face = "bold", size = 14, margin = margin(r = 15)),
+    axis.title.y.right = element_text(color = "black", face = "bold", size = 14, margin = margin(l = 15)),
+    axis.text.y = element_text(color = "black", size = 14),
+    axis.text.y.right = element_text(color = "black", size = 14),
+    axis.text.x = element_text(color = "black", size = 14, angle = 45, hjust = 1, vjust = 1),
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.spacing = unit(1.5, "lines"),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.margin = margin(5, 5, 5, 5),
+    plot.caption = element_text(hjust = 1, margin = margin(t = 15))
+  ) +
+  
+  # Adjust the legend layout for better presentation
+  guides(color = guide_legend(nrow = 2)) +
+  
+  # Add axis label for x-axis
+  labs(x = "Year") +
+  
+  # Prevent axis expansion
+  coord_cartesian(expand = FALSE)
+
+p_target_density
+# Add major disturbances (vertical lines and annotations)
+p_target_density_final <- p_target_density + 
+  geom_vline(xintercept = 2014, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2015, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2023.4, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2017.7, color = "gray50", linewidth = 2) +
+  geom_vline(xintercept = 2022.7, color = "gray50", linewidth = 2) +
+  annotate("text", x = 2013.8, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2014.8, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2023.9, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2017.5, y = 0.5, label = "Hurricane Irma", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5)+
+  annotate("text", x = 2022.5, y = 0.5, label = "Hurricane Ian", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5)
+
+# Display the final plot
+p_target_density_final
+
+#export if needed 
+ggsave(file= "Juvenile_proportion_28March.jpg",plot= p_target_density_final, width = 14, height = 10.2, units = "in", dpi = 600)
+```
+
+#### Figure 4 - Heat map 
+Summary of the annual trends in a heatmap with all 3 metrics together 
+
+The data i am using here is the pairs summary from each of the best model using the emmeans package. The easiest way to get it is using the Exporting model results_final.Rmd file.  
+
+
+```{r}
+library(ggh4x)
+
+# Step 1: Filter and summarize yearly contrasts for each data type
+density_pairs_sum <- pairs_summary %>%
+  filter(grepl("Year(\\d{4}) - Year(\\d{4})", contrast) &
+           as.numeric(sub("Year", "", sub(" - Year\\d{4}", "", contrast))) + 1 ==
+           as.numeric(sub("Year", "", sub("^.* - Year", "", contrast))))
+
+# Step 2: Add trend column for density pairs
+density_pairs_sum <- density_pairs_sum %>%
+  mutate(trend = case_when(
+    p.value <= 0.05 & estimate < 0 ~ 'increase',
+    p.value <= 0.05 & estimate > 0 ~ 'decrease',
+    p.value >= 0.05 ~ 'unchanged',
+    TRUE ~ 'similar'
+  ))
+head(density_pairs_sum)
+#view(density_pairs_sum)
+# Step 3: Process cover pairs
+cover_pairs_sum <- pairs.cover_summary %>%
+  filter(grepl("fYear(\\d{4}) - fYear(\\d{4})", contrast) &
+           as.numeric(sub("fYear", "", sub(" - fYear\\d{4}", "", contrast))) + 1 ==
+           as.numeric(sub("fYear", "", sub("^.* - fYear", "", contrast)))) %>%
+  mutate(trend = case_when(
+    p.value <= 0.05 & estimate < 0 ~ 'increase',
+    p.value <= 0.05 & estimate > 0 ~ 'decrease',
+    p.value >= 0.05 ~ 'unchanged',
+    TRUE ~ 'similar'
+  ))
+view(cover_pairs_sum)
+# Step 4: Process juvenile pairs
+Juv_pairs_sum <- pairs_juv %>%
+  filter(grepl("Year(\\d{4}) - Year(\\d{4})", contrast) &
+           as.numeric(sub("Year", "", sub(" - Year\\d{4}", "", contrast))) + 1 ==
+           as.numeric(sub("Year", "", sub("^.* - Year", "", contrast)))) %>%
+  mutate(trend = case_when(
+    p.value <= 0.05 & estimate < 0 ~ 'increase',
+    p.value <= 0.05 & estimate > 0 ~ 'decrease',
+    p.value >= 0.05 ~ 'unchanged',
+    TRUE ~ 'similar'
+  ))
+
+# Step 5: Clean up contrast labels in cover pairs
+cover_pairs_sum$contrast <- gsub("fYear", "Year", cover_pairs_sum$contrast)
+
+# Adding type identifiers
+cover_pairs_sum <- cover_pairs_sum %>% mutate(type = "Percent Cover")
+density_pairs_sum <- density_pairs_sum %>% mutate(type = "Density")
+Juv_pairs_sum <- Juv_pairs_sum %>% mutate(type = "Proportion of juveniles")
+
+# Step 6: Merge datasets
+all_pair_sum <- bind_rows(cover_pairs_sum, density_pairs_sum, Juv_pairs_sum)
+
+#########################
+all_pair_modified <- all_pair_sum
+
+all_pair_modified <- all_pair_modified %>%
+  mutate(Reg.Hab = factor(Reg.Hab),  # Ensure Reg.Hab is a factor for ordering
+         Reg.Hab.Type = factor(type, levels = c("Proportion of juveniles", "Density", "Percent Cover")))
+head(all_pair_modified)
+
+
+# Create the heatmap
+
+# Create a new column for the combined factor for the y-axis
+
+all_pair_modified$Reg.Hab.Combined <- interaction(all_pair_modified$Reg.Hab, all_pair_modified$type, sep = " - ", lex.order = TRUE)
+
+# Adjust the levels of Reg.Hab.Combined for proper ordering of rows
+all_pair_modified$Reg.Hab.Combined <- factor(all_pair_modified$Reg.Hab.Combined, 
+                                        levels = unique(all_pair_modified$Reg.Hab.Combined))
+
+head(all_pair_modified)
+# Create the heatmap
+
+# Step 8: Prepare the Reg.Hab factor with new labels
+Reg.Hab_labels <- c(
+  `NPSDT _ OD` = "DRTO Deep",
+  `NPSDT _ P` = "DRTO Patch",
+  `NPSDT _ PIN` = "DRTO Pinnacle",
+  `FKNMS _ OD` = "FK Deep Forereef",
+  `FKNMS _ OS` = "FK Shallow Forereef",
+  `FKNMS _ P` = "FK Patch",
+  `SECREMP _ Outer` = "SEFL Outer",
+  `SECREMP _ Middle` = "SEFL Middle",
+  `SECREMP _ Nearshore` = "SEFL Nearshore",
+  `SECREMP _ Inner` = "SEFL Inner"
+)
+
+all_pair_modified$Reg.Hab <- factor(all_pair_modified$Reg.Hab,
+                               levels = c("SECREMP _ Nearshore", "SECREMP _ Inner", "SECREMP _ Middle", "SECREMP _ Outer", 
+                                          "FKNMS _ P", "FKNMS _ OS", "FKNMS _ OD", 
+                                          "NPSDT _ P", "NPSDT _ PIN", "NPSDT _ OD"),
+                               labels = Reg.Hab_labels)
+
+all_pair_modified$Reg.Hab <- factor(
+  all_pair_modified$Reg.Hab,
+  levels =  c(
+    "DRTO Deep Forereef", 
+    "DRTO Pinnacle", 
+    "DRTO Patch", 
+    "FK Deep Forereef", 
+    "FK Shallow Forereef", 
+    "FK Patch", 
+    "SEFL Outer", 
+    "SEFL Middle", 
+    "SEFL Inner", 
+    "SEFL Nearshore"
+  ))
+
+# Step 9: Update factor levels for type to ensure correct order in facets
+type_order <- c("Proportion of juveniles", "Density" ,"Percent Cover")
+all_pair_modified$type <- factor(all_pair_modified$type, levels = type_order)
+
+# Step 10: Modify contrast to remove the word "Year"
+all_pair_modified$contrast <- gsub("Year", "", all_pair_modified$contrast)  # Remove 'Year' from contrast
+
+
+head(all_pair_sum)
+head(all_pair_modified)
+
+
+unique(all_pair_sum$Reg.Hab)
+unique(all_pair_sum$type)
+
+# Filter rows where Reg.Hab is "FK Shallow Forereef" and type is "Density"
+check <- all_pair_sum %>%
+  filter(Reg.Hab == "FKNMS _ OS", type == "Density") 
+
+check2 <- all_pair_modified %>%
+  filter(Reg.Hab == "FK Shallow Forereef", type == "Density") 
+
+view(check)
+view(check2)
+
+
+library(dplyr)
+
+# Step 1: Filter and summarize yearly contrasts for each data type
+density_pairs_sum <- pairs_summary %>%
+  filter(grepl("Year(\\d{4}) - Year(\\d{4})", contrast) &
+           as.numeric(sub("Year", "", sub(" - Year\\d{4}", "", contrast))) + 1 ==
+           as.numeric(sub("Year", "", sub("^.* - Year", "", contrast))))
+
+# Step 2: Add trend column for density pairs
+density_pairs_sum <- density_pairs_sum %>%
+  mutate(trend = case_when(
+    p.value <= 0.05 & estimate < 0 ~ 'increase',
+    p.value <= 0.05 & estimate > 0 ~ 'decrease',
+    p.value >= 0.05 ~ 'unchanged',
+    TRUE ~ 'similar'
+  ))
+
+# Step 3: Process cover pairs 
+cover_pairs_sum <- pairs.cover_summary %>%
+  filter(grepl("fYear(\\d{4}) - fYear(\\d{4})", contrast) &
+           as.numeric(sub("fYear", "", sub(" - fYear\\d{4}", "", contrast))) + 1 ==
+           as.numeric(sub("fYear", "", sub("^.* - fYear", "", contrast)))) %>%
+  mutate(trend = case_when(
+    p.value <= 0.05 & estimate < 0 ~ 'increase',
+    p.value <= 0.05 & estimate > 0 ~ 'decrease',
+    p.value >= 0.05 ~ 'unchanged',
+    TRUE ~ 'similar'
+  ))
+
+# Step 4: Process juvenile pairs
+Juv_pairs_sum <- pairs_juv %>%
+  filter(grepl("Year(\\d{4}) - Year(\\d{4})", contrast) &
+           as.numeric(sub("Year", "", sub(" - Year\\d{4}", "", contrast))) + 1 ==
+           as.numeric(sub("Year", "", sub("^.* - Year", "", contrast)))) %>%
+  mutate(trend = case_when(
+    p.value <= 0.05 & estimate < 0 ~ 'increase',
+    p.value <= 0.05 & estimate > 0 ~ 'decrease',
+    p.value >= 0.05 ~ 'unchanged',
+    TRUE ~ 'similar'
+  ))
+
+# Step 5: Clean up contrast labels in cover pairs
+cover_pairs_sum$contrast <- gsub("fYear", "Year", cover_pairs_sum$contrast)
+
+# Adding type identifiers
+cover_pairs_sum <- cover_pairs_sum %>% mutate(type = "Percent Cover")
+density_pairs_sum <- density_pairs_sum %>% mutate(type = "Density")
+Juv_pairs_sum <- Juv_pairs_sum %>% mutate(type = "Proportion of juveniles")
+
+# Step 6: Merge datasets
+all_pair_sum <- bind_rows(cover_pairs_sum, density_pairs_sum, Juv_pairs_sum)
+
+# Create a modified copy of the data
+all_pair_modified <- all_pair_sum %>%
+  mutate(Reg.Hab = factor(Reg.Hab),  # Ensure Reg.Hab is a factor for ordering
+         type = factor(type, levels = c("Proportion of juveniles", "Density", "Percent Cover")))
+
+# Step 8: Prepare the Reg.Hab factor with new labels
+Reg.Hab_labels <- c(
+  `NPSDT _ OD` = "DRTO Deep",
+  `NPSDT _ P` = "DRTO Patch",
+  `NPSDT _ PIN` = "DRTO Pinnacle",
+  `FKNMS _ OD` = "FK Deep Forereef",
+  `FKNMS _ OS` = "FK Shallow Forereef",
+  `FKNMS _ P` = "FK Patch",
+  `SECREMP _ Outer` = "SEFL Outer",
+  `SECREMP _ Middle` = "SEFL Middle",
+  `SECREMP _ Inner` = "SEFL Inner",
+  `SECREMP _ Nearshore` = "SEFL Nearshore"
+)
+
+# Step 9: Update factor levels for Reg.Hab and provide new labels correctly without overwriting
+all_pair_modified$Reg.Hab <- factor(all_pair_sum$Reg.Hab,
+                                    levels = names(Reg.Hab_labels),
+                                    labels = Reg.Hab_labels)
+
+# Step 10: Verify the data has the correct factor levels
+summary(all_pair_modified$Reg.Hab)
+summary(all_pair_modified$type)
+
+# Check data consistency with unique values
+print(unique(all_pair_sum$Reg.Hab))
+print(unique(all_pair_modified$Reg.Hab))
+
+# Step 11: Modify contrast to remove the word "Year"
+all_pair_modified$contrast <- gsub("Year", "", all_pair_modified$contrast)  # Remove 'Year' from contrast
+
+# Verification Check: Compare summaries from both data frames
+check <- all_pair_sum %>%
+  filter(Reg.Hab == "FKNMS _ OD", type == "Density") 
+
+check2 <- all_pair_modified %>%
+  filter(Reg.Hab == "FK Deep Forereef", type == "Density") 
+
+# Print verification summaries
+summary(check)
+summary(check2)
+
+
+# Set trend colors in a separate variable
+trend_color <- c('increase' = '#008C8C', 'decrease' = '#FF6F20', 'unchanged' = '#D3D3D3')
+
+# Modify the trend variable to specify the order of the legend
+all_pair_modified$trend <- factor(all_pair_modified$trend, levels = c('increase', 'decrease', 'unchanged'))
+
+
+heatmap_combined <- ggplot(all_pair_modified, aes(x = contrast, y = weave_factors(Reg.Hab, type), fill = trend)) +
+  geom_tile(color = "gray75", linewidth = 1 ) +  # White outline for the tiles
+  scale_fill_manual(values = c('increase' = '#008C8C', 'decrease' = '#FF6F20', 'unchanged' = '#D3D3D3'), 
+                    name = "Annual Difference", 
+                    labels = c('increase' = 'Increase', 'decrease' = 'Decrease', 'unchanged' = 'Similar')) +
+  labs(x = "Years", y ="") +  # Leave y-axis title blank
+  guides(y = guide_axis_nested(inv = TRUE, order=1)) +
+  theme_pubclean() +  
+  theme(axis.ticks = element_line(colour = "black"),
+        ggh4x.axis.nestline.y =element_line(size = 2),
+        ggh4x.axis.nesttext.y = element_text(colour = "black"),
+        legend.position = "bottom",
+        legend.title = element_text(face = "bold"),
+        legend.text = element_text(size = 14),
+        axis.text.x = element_text(face = "bold", angle = 45, hjust = 1, color = "black"),  
+        axis.title.x = element_text(face = "bold", size = 14, color = "black"),
+        panel.grid.major.x = element_line(color = "black", linewidth = 1)
+  )
+
+heatmap_combined
+
+
+# Save the combined heatmap
+ggsave("Fig4_Annual_diffrences_heatmap_APRIL9.jpeg", plot = heatmap_combined, width = 10, height = 8, dpi = 300)
+
+```
+
+
+### Supplementary 
+Here I provide two more broadscale version of the two figures that were generated above, Density + cover , and Juvenile proportions , both in a Projectregion resolution. 
+
+#### Figure S1 - Density and cover per region 
+
+```{r}
+Sum_density_Reg <- dat_df_selected %>%
+    group_by(Year, ProjectRegion ) %>%
+    summarize(
+      mean_density = mean(density, na.rm = TRUE), 
+      sd_density  = sd(density, na.rm = TRUE), 
+      median_density  = median(density),
+      n_stations  = n(),
+      .groups = 'drop'  # drop grouping after summarization
+    ) %>%
+    ungroup() %>% 
+    mutate(se_density  = sd_density / sqrt(n_stations))
+
+#COVER:
+  unique(cover_df_selected$Reg.Hab) #good , 10 levels
+  
+  Sum_OCTO_cover_Reg<- cover_df_selected %>%
+    group_by(Year, ProjectRegion) %>%
+    summarize(
+      mean_cover = mean(all_Branch, na.rm = TRUE), 
+      sd_cover  = sd(all_Branch, na.rm = TRUE), 
+      median_cover = median(all_Branch),
+      n_stations  = n(),
+      .groups = 'drop'  # drop grouping after summarization
+    ) %>%
+    ungroup() %>% 
+    mutate(se_cover = sd_cover/ sqrt(n_stations))
+  
+Sum_OCTO_cover_Reg
+
+str(Sum_OCTO_cover_Reg)
+str(Sum_density_Reg)
+
+# Remove extra spaces in the column names of Sum_density_Reg.Hab
+#colnames(Sum_density_Reg.Hab) <- gsub("\\s+", "", colnames(Sum_density_Reg.Hab))
+
+# Remove extra spaces in the column names of Sum_OCTO_cover_Reg.Hab
+#colnames(Sum_OCTO_cover_Reg.Hab) <- gsub("\\s+", "", colnames(Sum_OCTO_cover_Reg.Hab))
+
+# Merge the data frames after fixing the column names
+
+#To merge both df we need to have similar format for all col. Therefore,we need Convert Year to integer in both dataframes
+Sum_density_Reg <- Sum_density_Reg %>%
+  dplyr::mutate(Year = as.integer(as.character(Year)))
+#view(Sum_density_regional)
+Sum_OCTO_cover_Reg <- Sum_OCTO_cover_Reg %>%
+  dplyr::mutate(Year = as.integer(as.character(Year)))
+
+
+merged_Reg <- left_join(Sum_density_Reg , Sum_OCTO_cover_Reg, by = c("Year", "ProjectRegion"))
+
+head(merged_Reg)
+
+# Calculate the coefficient to scale mean_cover to a similar range as mean_density
+coeff_Reg<- max(merged_Reg$mean_density, na.rm = TRUE) / max(merged_Reg$mean_cover, na.rm = TRUE)
+#Visualize 
+
+unique(merged_Reg$ProjectRegion)
+
+merged_Reg$Reg<- factor(merged_Reg$ProjectRegion, 
+                                 levels= c("SECREMP","FKNMS", "NPSDT" ))
+
+# Create a named vector for facet labels
+Reg.labels <- c(
+  `SECREMP` = "Southeast Florida", 
+  `FKNMS` = "Florida Keys", 
+  `NPSDT` = "Dry Tortugas"
+)
+
+coeff = 100 #my coeff
+
+# Convert Year to integer 
+merged_Reg <- merged_Reg %>%
+  mutate(Year = as.integer(as.character(Year)))
+
+# Relevel the factor
+merged_Reg$ProjectRegion <- factor(
+  merged_Reg$ProjectRegion,
+  levels= c("SECREMP","FKNMS","NPSDT")
+)
+
+# Check the new levels
+levels(merged_Reg$ProjectRegion)
+
+p_Reg <- ggplot(merged_Reg, aes(x = Year)) +
+
+  geom_ribbon(aes(ymin = (mean_cover - se_cover) * coeff, 
+                  ymax = (mean_cover + se_cover) * coeff), 
+              fill = "orange", alpha = 0.2) +
+
+  geom_line(aes(y = mean_cover * coeff, color = "Percent Cover"), 
+            linewidth = 1.4, alpha = 0.8) +
+
+  geom_ribbon(aes(ymin = mean_density - se_density, 
+                  ymax = mean_density + se_density), 
+              fill = "skyblue", alpha = 0.2) +
+
+  geom_line(aes(y = mean_density, color = "Mean Density"), 
+            linewidth = 1.4, alpha = 0.8) +
+
+  scale_y_continuous(
+    name = "Octocoral cover (%)",
+    sec.axis = sec_axis(~ . * (coeff / 100), name = expression(bold("Octocoral density (m"^2*")")))
+  ) +
+
+  scale_x_continuous(breaks = seq(2013, 2024, by = 2), limits = c(2013, 2024)) +
+
+  scale_color_manual(
+    values = c("Mean Density" = "dodgerblue3", "Percent Cover" = "darkorange2"),
+    name = ""
+  ) +
+
+  facet_wrap(~ ProjectRegion, labeller = as_labeller(Reg.labels), ncol = 3) +
+
+  theme_pubclean() +
+
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    axis.ticks = element_line(colour = "black"),
+    axis.title.x = element_text(colour = "black", face = "bold", size = 14, margin = margin(t = 10)),
+    axis.title.y = element_text(colour = "black", face = "bold", size = 14, margin = margin(r = 10)),
+    axis.title.y.right = element_text(colour = "black", face = "bold", size = 14, margin = margin(l = 10)),
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(colour = "black", face = "bold", size = 12),
+    panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.title = element_blank(),
+    panel.spacing = unit(2, "lines")
+  ) +
+
+  labs(x = "Year") +
+  guides(color = guide_legend(reverse = TRUE, nrow = 1)) +
+
+  coord_cartesian(expand = FALSE)
+
+p_Reg
+
+p_Reg <-  p_Reg + 
+  geom_vline(xintercept = 2014, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2015, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2023.4, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2017.7, color = "gray50", linewidth = 2) +
+  geom_vline(xintercept = 2022.7, color = "gray50", linewidth = 2) +
+  annotate("text", x = 2013.8, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2014.8, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2023.9, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2017.5, y = 0.5, label = "Hurricane Irma", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5)+
+  annotate("text", x = 2022.5, y = 0.5, label = "Hurricane Ian", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5)
+p_Reg
+
+#Save if needed  
+ggsave(filename = "S1_Mean_Density_and_Cover_by_ProjectRegion_14April.jpg", plot = p_Reg, 
+       width = 14, height = 5.63, units = "in", dpi = 600)
+```
+
+#### Figure S2 - Juvenile and DENSITY of targer species per region 
+
+```{r prep. juvenile data, include=FALSE}
+#load density and juvenile proportion data for the 5/3 target species 
+
+ # FL.juv <- read.csv(file= "C:/Users/rliberma/OneDrive - Nova Southeastern University/Documents/Postdocing_NSU/Octocoral forests/Manuscript/scripts/processed_data/processed_juvenile and density of target species1.csv")
+
+  FL.juv <- FL.juv %>% 
+    dplyr::select("Year","ProjectRegion" ,"Subregion","SiteName","SiteID", "StationID", "habitatid","Reg.Hab", "Depth","Juv_proportion","target_density", "target_n" )
+  
+  FL.juv$Year <- as.factor(FL.juv$Year)
+  FL.juv$Reg.Hab <- as.factor(FL.juv$Reg.Hab)
+  FL.juv$habitatid <- as.factor(FL.juv$habitatid)
+  FL.juv$Subregion <- as.factor(FL.juv$Subregion)
+  FL.juv$ProjectRegion <- as.factor(FL.juv$ProjectRegion)
+  FL.juv$SiteName <- as.factor(FL.juv$SiteName) 
+  FL.juv$SiteID <- as.factor(FL.juv$SiteID) 
+  FL.juv$StationID <- as.factor(FL.juv$StationID) 
+  
+  
+  # Identify the rows with NA values in the merged dataset
+  rows_with_na_ex1 <- FL.juv[rowSums(is.na(FL.juv)) > 0, ]
+  
+  # Print the rows with NA values in the merged dataset
+  print(rows_with_na_ex1) # no rows with NA
+  
+  
+  summary_stats.region <- FL.juv %>%
+    group_by(Year, ProjectRegion) %>%
+    summarize(mean_juv_prop = mean(Juv_proportion ),
+              sd_prop = sd(Juv_proportion),
+              se_prop = sd(Juv_proportion) / sqrt(n()),
+              mean_target_density = mean(target_density),
+              sd_target_density = sd(target_density),
+              se_target_density = sd(target_density) / sqrt(n()))
+  
+  # View the summary statistics
+  summary_stats.region
+
+```
+
+plot 
+```{r plot juvenile data}
+#make region levels in a better order and a better name
+  summary_stats.region$ProjectRegion <- factor(summary_stats.region$ProjectRegion, levels = c("SECREMP","FKNMS","NPSDT"))
+  
+# Create a named vector for facet labels
+Reg.labels <- c(
+  `SECREMP` = "Southeast Florida", 
+  `FKNMS` = "Florida Keys", 
+  `NPSDT` = "Dry Tortugas"
+)
+  
+
+  # Assuming 'summary_stats' is the summarized dataset
+  coeff_ratio <- 100  # Assuming 100 to scale the ratio for visualization
+  
+  summary_stats.region <- summary_stats.region %>%
+    mutate(Year = as.integer(as.character(Year)))
+  str(summary_stats.region)
+  
+  p_juv_density_Reg <- ggplot(summary_stats.region, aes(x = Year, group = ProjectRegion)) +
+    # Add line for mean target density
+  geom_line(aes(y = mean_target_density, color = "Mean density of target spp."),
+            linewidth = 2, alpha = 0.8) +
+  
+  # Add ribbon for standard error of mean target density
+  geom_ribbon(aes(ymin = mean_target_density - se_target_density,
+                  ymax = mean_target_density + se_target_density),
+              fill = "skyblue", alpha = 0.3) +
+  
+  # Add points and error bars for mean juvenile proportion (scaled)
+  geom_point(aes(y = mean_juv_prop * coeff_ratio, color = "Proportion of juveniles within target spp. populations"),
+             size = 3) +
+  
+  geom_errorbar(aes(ymin = (mean_juv_prop - se_prop) * coeff_ratio,
+                    ymax = (mean_juv_prop + se_prop) * coeff_ratio,
+                    color = "Proportion of juveniles within target spp. populations"),
+                width = 0.2, alpha = 0.7) +
+  
+  # Scale for y-axis
+  scale_y_continuous(
+    name = expression(bold("Mean target spp. density (m"^2*")")),
+    sec.axis = sec_axis(~ ., name = "Proportion of juveniles (%)")
+  ) +
+  
+  # Scale for x-axis
+  scale_x_continuous(breaks = seq(2013, 2024, by = 2), limits = c(2013, 2024)) +
+  
+  # Custom colors for the plot
+  scale_color_manual(values = c("Mean density of target spp." = "dodgerblue3", 
+                                "Proportion of juveniles within target spp. populations" = "darkorange2"), name = "") +
+    
+    facet_wrap(~ ProjectRegion, labeller = as_labeller(Reg.labels)) +
+     theme_pubclean() +
+
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    axis.ticks = element_line(colour = "black"),
+    axis.title.x = element_text(colour = "black", face = "bold", size = 14, margin = margin(t = 10)),
+    axis.title.y = element_text(colour = "black", face = "bold", size = 14, margin = margin(r = 10)),
+    axis.title.y.right = element_text(colour = "black", face = "bold", size = 14, margin = margin(l = 10)),
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(colour = "black", face = "bold", size = 12),
+    panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.title = element_blank(),
+    panel.spacing = unit(2, "lines")
+  ) +
+  labs(x = "Year") +
+  coord_cartesian(expand = FALSE)
+    
+  p_juv_density_Reg
+
+  p_juv_density_Reg <- p_juv_density_Reg+ 
+      geom_vline(xintercept = 2014, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2015, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2023.4, color = "red4", linetype = "dashed", linewidth = 1.5) +
+  geom_vline(xintercept = 2017.7, color = "gray50", linewidth = 2) +
+  geom_vline(xintercept = 2022.7, color = "gray50", linewidth = 2) +
+  annotate("text", x = 2013.8, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2014.8, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2023.9, y = 0.5, label = "Marine heatwave", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5) +
+  annotate("text", x = 2017.5, y = 0.5, label = "Hurricane Irma", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5)+
+  annotate("text", x = 2022.5, y = 0.5, label = "Hurricane Ian", 
+           color = "black", angle = 90, vjust = 0, hjust = 0, size = 2.5)
+p_juv_density_Reg 
+
+#export if needed 
+ggsave(file= "Supp2_Juvenile_proportion.Reg_March31.jpg",plot= p_juv_density_Reg, width = 10, height = 5.63, units = "in", dpi = 600) 
+```
+
+#### Figure S3- Best octocoral cover model emmeans: - pairwise comarison 
+```{r}
+Cover_for_model <- Cover
+head(Cover_for_model)
+unique(Cover_for_model$Reg.Hab)
+
+str(Cover_for_model)
+
+cover.mod <- glmmTMB(all_branch ~ Year * Reg.Hab+(1|SiteID/StationID),
+              family = binomial, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)), weights = points, 
+              data = Cover_for_model)
+summary(cover.mod)
+
+# This should be
+cover_emm.year.hab <- emmeans(cover.mod, ~ Year | Reg.Hab)
+
+cover.pairs <- pairs(cover_emm.year.hab)
+head(cover.pairs)
+
+emm.cover.pairs.df <- as.data.frame(cover.pairs)
+
+# Define the labels for Reg.Hab
+Reg.Hab_labels <- c(
+  `FKNMS _ OD` = "FK Deep Forereef", 
+  `FKNMS _ OS` = "FK Shallow Forereef", 
+  `FKNMS _ P` = "FK Patch", 
+  `SECREMP _ Inner` = "SEFL Inner",  
+  `SECREMP _ Middle` = "SEFL Middle", 
+  `SECREMP _ Nearshore` = "SEFL Nearshore", 
+  `SECREMP _ Outer` = "SEFL Outer",
+  `NPSDT _ OD` = "DRTO Deep Forereef", 
+  `NPSDT _ P` = "DRTO Patch",
+  `NPSDT _ PIN` = "DRTO Pinnacle"
+)
+
+# Create a new factor ordering
+# Specify the desired order based on the new labels
+desired_levels <- c(
+  "SEFL Nearshore", "SEFL Inner", "SEFL Middle", "SEFL Outer",
+  "FK Patch", "FK Shallow Forereef", "FK Deep Forereef",
+  "DRTO Patch", "DRTO Pinnacle", "DRTO Deep Forereef"
+)
+
+# Reorder and rename Reg.Hab in emm.pairs.df
+cover.pairs.reorder <- emm.cover.pairs.df  
+# Reorder and rename Reg.Hab in emm.pairs.df
+cover.pairs.reorder$Reg.Hab <- factor(
+  cover.pairs.reorder$Reg.Hab,
+  levels = names(Reg.Hab_labels), # Old levels as specified
+  labels = Reg.Hab_labels[names(Reg.Hab_labels)], # Corresponding new labels
+  ordered = TRUE # Creates an ordered factor
+)
+
+# Ensure the levels are in desired order
+cover.pairs.reorder$Reg.Hab <- factor(cover.pairs.reorder$Reg.Hab, levels = desired_levels)
+
+head(cover.pairs.reorder)
+# Check the structure of the modified dataframe
+str(emm.cover.pairs.df)
+
+# Assume emm.pairs.df has similar structure to emm.contrast.df
+# Create a new column for significant results
+cover.pairs.reorder <- cover.pairs.reorder %>%
+  mutate(significant = ifelse(p.value < 0.05, "*", "")) # Add a `significant` column with `*` for p < 0.05
+
+unique(cover.pairs.reorder$Reg.Hab)
+```
+
+create three plots , each for each region  
+```{r}
+rm(gg_DRTO,gg_FK,gg_SEFL,combined_plot) #remove previous plots
+
+# Filter the data for just the DRTO Reg.Hab
+drto_df <- cover.pairs.reorder %>% 
+  filter(Reg.Hab %in% c("DRTO Deep Forereef", "DRTO Patch", "DRTO Pinnacle"))
+head(drto_df)
+# Create the plot
+
+gg_DRTO <- ggplot(drto_df, aes(x = estimate, y = contrast)) + 
+  
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  
+  facet_wrap(~Reg.Hab, ncol = 3) +  # Facet by the Reg.Hab
+  
+  labs(
+    
+    x = "Estimate (Log Scale)", 
+    
+    y = "Year-to-year",
+    
+    title = "Post-hoc year-to-year comparisons for Dry Tortugas Regional Habitats"
+    
+  ) +
+  
+  theme_bw() +
+  
+  theme(
+    
+    legend.position = "bottom",
+    
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    
+    strip.background = element_rect(fill = "white", color = NA),
+    
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    
+    panel.background = element_rect(fill = "white", color = NA),
+    
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    
+    plot.title = element_blank() , # 
+    
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+    
+  )
+
+gg_DRTO
+
+#export the above plot
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+
+#      width = 28, height = 12, units = "cm", dpi = 300)
+
+#levels(emm.cover.pairs.df$Reg.Hab)
+
+# Filter the data for just the DRTO Reg.Hab
+
+fk_df <- cover.pairs.reorder %>% 
+  filter(Reg.Hab %in% c("FK Patch", "FK Shallow Forereef", "FK Deep Forereef" ))
+
+# Create the plot
+
+gg_FK <- ggplot(fk_df, aes(x = estimate, y = contrast)) + 
+  
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  
+  facet_wrap(~Reg.Hab, ncol = 3) +  # Facet by the Reg.Hab
+  
+  labs(
+    
+    x = "Estimate (Log Scale)", 
+    
+    y = "Year-to-year",
+    
+    title = "Post-hoc year-to-year comparisons for Cover in FK Regional Habitats"
+    
+  ) +
+  
+  theme_bw() +
+  
+  theme(
+    
+    legend.position = "bottom",
+    
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    
+    strip.background = element_rect(fill = "white", color = NA),
+    
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    
+    panel.background = element_rect(fill = "white", color = NA),
+    
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    
+    plot.title = element_blank() , # 
+    
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+    
+  )
+
+gg_FK
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+
+#       width = 28, height = 12, units = "cm", dpi = 300)
+
+# Filter the data for just the DRTO Reg.Hab
+
+SEFL_df <- cover.pairs.reorder %>% 
+  filter(Reg.Hab %in% c("SEFL Nearshore","SEFL Inner",
+                        
+                        "SEFL Middle","SEFL Outer" ))
+# Create the plot
+
+gg_SEFL <- ggplot(SEFL_df, aes(x = estimate, y = contrast)) + 
+  
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  
+  facet_wrap(~Reg.Hab, ncol = 4) +  # Facet by the Reg.Hab
+  
+  labs(
+    
+    x = "Estimate (Log Scale)", 
+    
+    y = "Year-to-year",
+    
+    title = "Post-hoc year-to-year comparisons for Cover in FCR Regional Habitats"
+    
+  ) +
+  
+  theme_bw() +
+  
+  theme(
+    
+    legend.position = "bottom",
+    
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    
+    strip.background = element_rect(fill = "white", color = NA),
+    
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    
+    panel.background = element_rect(fill = "white", color = NA),
+    
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    
+    #plot.title = element_blank() , # 
+    
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+    
+  )
+
+gg_SEFL
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+
+#width = 28, height = 12, units = "cm", dpi = 300)
+
+#
+```
+
+Combine plots
+```{r}
+# Load the patchwork package
+library(patchwork)
+
+# Modify gg_ECA to remove x-axis
+
+# Update gg_SEFL to remove x-axis title and keep y-axis title
+gg_SEFL <- gg_SEFL + 
+  theme(
+    axis.text.y = element_text(size = 6),  
+    axis.title.y = element_blank(),  # Remove x-axis title
+    axis.title.x = element_blank()  # Remove x-axis title
+  ) +  
+  scale_y_discrete(labels = function(x) gsub("Year", "", x))
+
+# Update gg_FK to keep y-axis title
+gg_FK <- gg_FK + 
+    theme(
+      axis.text.y = element_text(size = 6),  
+      axis.title.y = element_blank(),  # Remove x-axis title
+      axis.title.x = element_blank()  # Remove x-axis title
+  ) +  
+  scale_y_discrete(labels = function(x) gsub("Year", "", x))
+
+# Update gg_DRTO to keep y-axis title
+gg_DRTO <- gg_DRTO + 
+  theme(
+    axis.title.y = element_blank()  # Remove x-axis title
+  ) +  
+  scale_y_discrete(labels = function(x) gsub("Year", "", x))  # Remove 'Year' from y-axis labels, but keep title
+
+# Combine the plots again after updates
+combined_plot <- gg_SEFL / gg_FK / gg_DRTO + 
+  plot_layout(ncol = 1) 
+
+# Display the combined plot
+print(combined_plot)
+
+#Export the combined plot to a file with ggsave
+ggsave("S3_Cover_emmeans_Pairwise_emmeans_14April.jpeg", 
+      plot = combined_plot, 
+     width = 9,     # Width in inches
+      height = 11,     # Height in inches
+      dpi = 300,       # Resolution in dots per inch
+      units = "in")    # Specify the units for width and height
+```
+
+
+#### Figure S4- pairwise comarison of Best octocoral Density model using emmeans :- 
+```{r}
+Best <- glmmTMB(counts ~ Year * Reg.Hab+(1|SiteID/StationID) +
+                            ar1(Year-1|StationID),
+                                 family = nbinom2, data = Total.octo_no_2012)
+Best <- update(Best_model.ar1, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+density.emm.year.hab <- emmeans(Best, ~ Year|Reg.Hab) #compares years within habitat in my Best Model
+
+density.pairs <- pairs(density.emm.year.hab)
+head(density.pairs)
+
+density.pairs_df <- as.data.frame(density.pairs)
+head(density.pairs_df)
+str(density.pairs_df)
+
+# Define the labels for Reg.Hab
+Reg.Hab_labels <- c(
+  `FKNMS _ OD` = "FK Deep Forereef", 
+  `FKNMS _ OS` = "FK Shallow Forereef", 
+  `FKNMS _ P` = "FK Patch", 
+  `SECREMP _ Inner` = "SEFL Inner",  
+  `SECREMP _ Middle` = "SEFL Middle", 
+  `SECREMP _ Nearshore` = "SEFL Nearshore", 
+  `SECREMP _ Outer` = "SEFL Outer",
+  `NPSDT _ OD` = "DRTO Deep Forereef", 
+  `NPSDT _ P` = "DRTO Patch",
+  `NPSDT _ PIN` = "DRTO Pinnacle"
+)
+
+# Create a new factor ordering
+# Specify the desired order based on the new labels
+desired_levels <- c(
+  "SEFL Nearshore", "SEFL Inner", "SEFL Middle", "SEFL Outer",
+  "FK Patch", "FK Shallow Forereef", "FK Deep Forereef",
+  "DRTO Patch", "DRTO Pinnacle", "DRTO Deep Forereef"
+)
+
+# Reorder and rename Reg.Hab in emm.pairs.df
+density.pairs.reorder <- density.pairs_df  
+
+density.pairs.reorder$Reg.Hab <- factor(
+  density.pairs.reorder$Reg.Hab,
+  levels = names(Reg.Hab_labels), # Old levels as specified
+  labels = Reg.Hab_labels[names(Reg.Hab_labels)], # Corresponding new labels
+  ordered = TRUE # Creates an ordered factor
+)
+
+unique(density.pairs.reorder$Reg.Hab)
+
+# Ensure the levels are in desired order
+density.pairs.reorder$Reg.Hab <- factor(density.pairs.reorder$Reg.Hab, levels = desired_levels)
+
+levels(density.pairs.reorder$Reg.Hab)
+```
+
+Check if the updated names vesrion is similar to the original emm.pairs
+
+```{r}
+view(density.pairs_df)
+head(summary(density.pairs_df))
+head(summary(density.pairs.reorder))
+
+#str(emm.pairs.df)
+```
+
+plot
+```{r}
+rm(gg_DRTO,gg_FK,gg_SEFL,combined_plot) #remove previous plots
+
+# Create a new column for significant results
+density.pairs.reorder <- density.pairs.reorder %>%
+  mutate(significant = ifelse(p.value < 0.05, "*", "")) # Add a `significant` column with `*` for p < 0.05
+
+
+# Filter the data for just the DRTO Reg.Hab
+drto_df <- density.pairs.reorder %>% 
+  filter(Reg.Hab %in% c("DRTO Deep Forereef", "DRTO Patch", "DRTO Pinnacle"))
+head(drto_df)
+# Create the plot
+gg_DRTO <- ggplot(drto_df, aes(x = estimate, y = contrast)) + 
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  facet_wrap(~Reg.Hab, ncol = 3) +  # Facet by the Reg.Hab
+  labs(
+    x = "Estimate (Log Scale)", 
+    y = "Year-to-year",
+    title = "Post-hoc year-to-year density comparisons for Dry Tortugas Regional Habitats"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.title = element_blank() , # 
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+  )
+
+gg_DRTO
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+ #      width = 28, height = 12, units = "cm", dpi = 300)
+
+
+#  Florida keys 
+
+fk_df <- density.pairs.reorder %>% 
+  filter(Reg.Hab %in% c("FK Patch", "FK Shallow Forereef", "FK Deep Forereef" ))
+
+# Create the plot
+gg_FK <- ggplot(fk_df, aes(x = estimate, y = contrast)) + 
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  facet_wrap(~Reg.Hab, ncol = 3) +  # Facet by the Reg.Hab
+  labs(
+    x = "Estimate (Log Scale)", 
+    y = "Year-to-year",
+    title = "Post-hoc year-to-year density comparisons for FK Regional Habitats"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.title = element_blank() , # 
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+  )
+
+gg_FK
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+#       width = 28, height = 12, units = "cm", dpi = 300)
+
+
+#Southeast Florida 
+
+# Filter the data for just the DRTO Reg.Hab
+fk_SEFL <- density.pairs.reorder %>% 
+  filter(Reg.Hab %in% c("SEFL Nearshore","SEFL Inner","SEFL Middle", "SEFL Outer"))
+#head(drto_df)
+# Create the plot
+gg_SEFL<- ggplot(fk_SEFL, aes(x = estimate, y = contrast)) + 
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  facet_wrap(~Reg.Hab, ncol = 4) +  # Facet by the Reg.Hab
+  labs(
+    x = "Estimate (Log Scale)", 
+    y = "Year-to-year",
+    title = "Emmeans Post hoc year-to-year comparisons octocoral density in FCR Regional Habitats"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    #plot.title = element_blank() , # 
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+  )
+
+gg_SEFL
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+#width = 28, height = 12, units = "cm", dpi = 300)
+
+### Plot all together ###
+
+# Load the patchwork package
+library(patchwork)
+
+# Update gg_SEFL to remove x-axis title and keep y-axis title
+gg_SEFL <- gg_SEFL + 
+  theme(
+    axis.text.y = element_text(size = 6),  
+    axis.title.y = element_blank(),  # Remove x-axis title
+    axis.title.x = element_blank()  # Remove x-axis title
+  ) +  
+  scale_y_discrete(labels = function(x) gsub("Year", "", x))
+
+# Update gg_FK to keep y-axis title
+gg_FK <- gg_FK + 
+    theme(
+      axis.text.y = element_text(size = 6),  
+      axis.title.y = element_blank(),  # Remove x-axis title
+      axis.title.x = element_blank()  # Remove x-axis title
+  ) +  
+  scale_y_discrete(labels = function(x) gsub("Year", "", x))
+
+# Update gg_DRTO to keep y-axis title
+gg_DRTO <- gg_DRTO + 
+  theme(
+    axis.title.y = element_blank()  # Remove x-axis title
+  ) +  
+  scale_y_discrete(labels = function(x) gsub("Year", "", x))  # Remove 'Year' from y-axis labels, but keep title
+
+# Combine the plots again after updates
+combined_plot <- gg_SEFL / gg_FK / gg_DRTO + 
+  plot_layout(ncol = 1) 
+
+# Display the combined plot
+print(combined_plot)
+
+#Export the combined plot to a file with ggsave
+ggsave("S4_Density_Pairwise_emmeans_April14.jpeg", 
+      plot = combined_plot, 
+     width = 9,     # Width in inches
+      height = 11,     # Height in inches
+      dpi = 300,       # Resolution in dots per inch
+      units = "in")    # Specify the units for width and height
+```
+
+#### Figure S5- pairwise comarison of Best octocoral juvenile proportions  model using emmeans :- 
+```{r}
+binomial_model_reg_hab <- glmmTMB(Juv_proportion ~ Year * Reg.Hab + (1 | SiteID/StationID),
+                                  family = binomial, weights = target_n,
+                                  data = FL.juv)
+
+juv.mod <- binomial_model_reg_hab
+
+# This should be
+juv_emm.year.hab <- emmeans(juv.mod, ~ Year | Reg.Hab)
+
+juv.pairs <- pairs(juv_emm.year.hab)
+
+juv.pairs.df <- as.data.frame(juv.pairs)
+head(emm.juv.pairs.df)
+
+# Reorder and rename Reg.Hab in emm.pairs.df
+emm.juv.pairs.df <- juv.pairs.df
+emm.juv.pairs.df$Reg.Hab <- factor(
+  emm.juv.pairs.df$Reg.Hab,
+  levels = names(Reg.Hab_labels), # Old levels as specified
+  labels = Reg.Hab_labels[names(Reg.Hab_labels)], # Corresponding new labels
+  ordered = TRUE # Creates an ordered factor
+)
+
+# Ensure the levels are in desired order
+emm.juv.pairs.df$Reg.Hab <- factor(emm.juv.pairs.df$Reg.Hab, levels = desired_levels)
+
+head(emm.juv.pairs.df)
+```
+
+Check the updated version vs. original one 
+
+```{r}
+
+# Filter rows where Reg.Hab is "FK Shallow Forereef" and type is "Density"
+check <- juv.pairs.df %>%
+  filter(Reg.Hab == "NPSDT _ OD") 
+
+check2 <- emm.juv.pairs.df %>%
+  filter(Reg.Hab == "DRTO Deep Forereef")
+
+summary(check)
+summary(check2)
+
+#equal numbers - check good 
+```
+
+plot juvenile proportions emmeans
+```{r}
+rm(gg_DRTO,gg_FK,gg_SEFL,combined_plot) #remove previous plots
+
+# Assume emm.pairs.df has similar structure to emm.contrast.df
+# Create a new column for significant results
+emm.juv.pairs.df <- emm.juv.pairs.df %>%
+  mutate(significant = ifelse(p.value < 0.05, "*", "")) # Add a `significant` column with `*` for p < 0.05
+
+
+# Filter the data for just the DRTO Reg.Hab
+drto_df <- emm.juv.pairs.df %>% 
+  filter(Reg.Hab %in% c("DRTO Deep Forereef", "DRTO Patch", "DRTO Pinnacle"))
+#head(drto_df)
+# Create the plot
+gg_DRTO <- ggplot(drto_df, aes(x = estimate, y = contrast)) + 
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  facet_wrap(~Reg.Hab, ncol = 3) +  # Facet by the Reg.Hab
+  labs(
+    x = "Estimate (Log Scale)", 
+    y = "Year-to-year",
+    title = "Post-hoc year-to-year comparisons for Dry Tortugas Regional Habitats"
+  ) +
+    theme_bw() +
+  theme(
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.title = element_blank() , # 
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+  )
+
+gg_DRTO
+
+#export the above plot
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+#      width = 28, height = 12, units = "cm", dpi = 300)
+
+
+#Florida keys 
+
+# Filter the data for just the DRTO Reg.Hab
+fk_df <- emm.juv.pairs.df %>% 
+  filter(Reg.Hab %in% c("FK Patch", "FK Shallow Forereef", "FK Deep Forereef" ))
+
+
+# Create the plot
+gg_FK <- ggplot(fk_df, aes(x = estimate, y = contrast)) + 
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  facet_wrap(~Reg.Hab, ncol = 3) +  # Facet by the Reg.Hab
+  labs(
+    x = "Estimate (Log Scale)", 
+    y = "Year-to-year",
+    title = "Post-hoc year-to-year comparisons for FK Regional Habitats"
+  ) +
+  theme_bw() +
+  theme(
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.title = element_blank() , # 
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+  )
+
+gg_FK
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+#       width = 28, height = 12, units = "cm", dpi = 300)
+
+# Filter the data for just the DRTO Reg.Hab
+SEFL_df <- emm.juv.pairs.df %>% 
+  filter(Reg.Hab %in% c("SEFL Nearshore", "SEFL Inner","SEFL Middle","SEFL Outer" ))
+#head(drto_df)
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+#width = 28, height = 12, units = "cm", dpi = 300)
+
+
+gg_SEFL<- ggplot(fk_SEFL, aes(x = estimate, y = contrast)) + 
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  facet_wrap(~Reg.Hab, ncol = 4) +  # Facet by the Reg.Hab
+  labs(
+    x = "Estimate (Log Scale)", 
+    y = "Year-to-year",
+    title = "Emmeans post hoc year-to-year Juvenile proportions comparisons in FCR Regional Habitats"
+  ) +
+  theme_bw() +
+  theme(
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    #plot.title = element_blank() , # 
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+  )
+
+gg_SEFL
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+#width = 28, height = 12, units = "cm", dpi = 300)
+
+#Make combined juvenile proportion plot
+### Plot all together ###
+
+# Modify gg_SEFL to remove x-axis
+
+gg_SEFL <- gg_SEFL + 
+  
+ theme(
+    
+    axis.text.y = element_text(size = 6),  
+     axis.title.y = element_blank(),
+    axis.title.x = element_blank(),  # Remove x-axis title
+    axis.text.x = element_text(size = 6) 
+  )  +
+  
+  scale_y_discrete(labels = function(x) gsub("Year", "", x))  # Remove 'Year' from y-axis labels
+
+
+# Update gg_FK
+
+gg_FK <- gg_FK + 
+ theme(
+    
+    axis.text.y = element_text(size = 6),  
+     axis.title.y = element_blank(),
+    axis.title.x = element_blank(),  # Remove x-axis title
+    axis.text.x = element_text(size = 6) 
+  )  +
+  
+  scale_y_discrete(labels = function(x) gsub("Year", "", x))  # Remove 'Year' from y-axis labels
+
+# Update gg_DRTO
+
+gg_DRTO <- gg_DRTO + 
+  
+  theme(
+    
+    axis.text.y = element_text(size = 6),  # Adjust font size for y-axis labels
+    axis.title.y = element_blank() 
+  ) +
+  
+  scale_y_discrete(labels = function(x) gsub("Year", "", x))  # Remove 'Year' from y-axis labels
+
+# Combine the plots again after updates
+
+combined_plot <- gg_SEFL / gg_FK / gg_DRTO + 
+  
+  plot_layout(ncol = 1)  # Arrange in 1 column
+  
+  #+ theme(plot.title = element_blank())  # Remove any title
+
+# Display the combined plot
+
+print(combined_plot)
+
+#Export the combined plot to a file with ggsave
+ggsave("S5_JUVENILE_Pairwise_emmeans_14April.jpeg", 
+      plot = combined_plot, 
+     width = 9,     # Width in inches
+      height = 11,     # Height in inches
+      dpi = 300,       # Resolution in dots per inch
+      units = "in")    # Specify the units for width and height
+```
+
+
+#### Figure S6 juvenile contrasts 
+
+```{r}
+emm.year.hab <- emmeans(best_mod, ~ Year|Reg.Hab) #compares years within habitat
+pairs(emm.year.hab) 
+contrast(emm.year.hab)
+
+juv_contrast_summary <- as.data.frame(contrast(emm.year.hab))
+#pairs_summary
+head(juv_contrast_summary)
+
+plot(emm.year.hab,comparisons = TRUE)
+
+desired_levels <- c(
+  "SEFL Nearshore", "SEFL Inner", "SEFL Middle", "SEFL Outer",
+  "FK Patch", "FK Shallow Forereef", "FK Deep Forereef",
+  "DRTO Patch", "DRTO Pinnacle", "DRTO Deep Forereef"
+)
+# Reorder and rename Reg.Hab in emm.pairs.df
+emm.juv.pairs.df <- juv.pairs.df
+juv_contrast_summary$Reg.Hab <- factor(
+  juv_contrast_summary$Reg.Hab,
+  levels = names(Reg.Hab_labels), # Old levels as specified
+  labels = Reg.Hab_labels[names(Reg.Hab_labels)], # Corresponding new labels
+  ordered = TRUE # Creates an ordered factor
+)
+
+# Ensure the levels are in desired order
+juv_contrast_summary$Reg.Hab <- factor(juv_contrast_summary$Reg.Hab, levels = desired_levels)
+
+
+# Create a new column for significant results
+juv_contrast_summary <- juv_contrast_summary %>%
+  mutate(significant = ifelse(p.value < 0.05, "*", "")) # Add a `significant` column with `*` for p < 0.05
+head(juv_contrast_summary)
+
+# Filter the data for just the DRTO Reg.Hab
+drto_df <- juv_contrast_summary %>% 
+  filter(Reg.Hab %in% c("DRTO Deep Forereef", "DRTO Patch", "DRTO Pinnacle"))
+#head(drto_df)
+# Create the plot
+gg_DRTO <- ggplot(drto_df, aes(x = estimate, y = contrast)) + 
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  facet_wrap(~Reg.Hab, ncol = 3) +  # Facet by the Reg.Hab
+  labs(
+    x = "Estimate (Log Scale)", 
+    y = "Years",
+    title = "Post-hoc year vs. mean comparisons for Dry Tortugas Regional Habitats"
+  ) +
+  theme_bw() +
+  theme(
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.title = element_blank() , # 
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+  )
+
+gg_DRTO
+
+#export the above plot
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+#      width = 28, height = 12, units = "cm", dpi = 300)
+
+
+#Florida keys 
+
+# Filter the data for just the DRTO Reg.Hab
+fk_df <- juv_contrast_summary %>% 
+  filter(Reg.Hab %in% c("FK Patch", "FK Shallow Forereef", "FK Deep Forereef" ))
+
+
+# Create the plot
+gg_FK <- ggplot(fk_df, aes(x = estimate, y = contrast)) + 
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  facet_wrap(~Reg.Hab, ncol = 3) +  # Facet by the Reg.Hab
+  labs(
+    x = "Estimate (Log Scale)", 
+    y = "Years",
+    title = "Post-hoc year vs. mean comparisons for FK Regional Habitats"
+  ) +
+  theme_bw() +
+  theme(
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.title = element_blank() , # 
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+  )
+
+gg_FK
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+#       width = 28, height = 12, units = "cm", dpi = 300)
+
+# Filter the data for just the DRTO Reg.Hab
+SEFL_df <- juv_contrast_summary %>% 
+  filter(Reg.Hab %in% c("SEFL Nearshore", "SEFL Inner","SEFL Middle","SEFL Outer" ))
+#head(drto_df)
+
+# Create the plot
+gg_SEFL <- ggplot(SEFL_df, aes(x = estimate, y = contrast)) + 
+  geom_point(size = 1) +  # Points for estimates; reduced from size 3 to 2
+  geom_errorbarh(aes(xmin = estimate - SE, xmax = estimate + SE), height = 0.2) +  # Horizontal error bars
+  geom_text(aes(label = ifelse(p.value < 0.05, "*", "")), 
+            nudge_y = 0.1, size = 6, color = "red") +  # Reduced text size to 4
+  facet_wrap(~Reg.Hab, ncol = 4) +  # Facet by the Reg.Hab
+  labs(
+    x = "Estimate (Log Scale)", 
+    y = "Years",
+    title = "Post-hoc year vs. mean comparisons for FCR Regional Habitats"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),  # Reduced legend text size to 10
+    axis.title.x = element_text(face = "bold", size = 12, margin = margin(t = 10)),  # Reduced size to 12
+    axis.title.y = element_text(face = "bold", size = 12, margin = margin(r = 10)),  # Reduced size to 12
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 10),  # Reduced facet strip text size to 10
+    #panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    #plot.title = element_blank() , # 
+    #plot.title = element_text(face = "bold", size = 12, hjust = 0.5),  # Reduced size to 12 for the title
+    panel.spacing = unit(1, "lines")  # Reduced spacing between panels
+  )
+
+gg_SEFL
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+#width = 28, height = 12, units = "cm", dpi = 300)
+
+#Make combined juvenile proportion plot
+
+
+#ggsave(filename = "DRTO Pairwise_emmeans.jpeg", plot = gg_DRTO, 
+#width = 28, height = 12, units = "cm", dpi = 300)
+
+### Plot all together ###
+# Modify gg_SEFL to remove x-axis
+
+
+gg_SEFL <- gg_SEFL + 
+  theme(
+    
+    axis.text.y = element_text(size = 6),  
+     axis.title.y = element_blank(),  # Remove x-axis title
+   axis.title.x = element_blank()  # Remove x-axis title
+   # axis.text.x = element_blank()      # Remove x-axis text
+  )  +
+  
+  scale_y_discrete(labels = function(x) gsub("effect", "", x))  # Remove 'Year' from y-axis labels
+
+# Update gg_FK
+
+gg_FK <- gg_FK + 
+  theme(
+    axis.text.y = element_text(size = 6),  
+    axis.title.y = element_blank(),  # Remove x-axis title
+    axis.title.x = element_blank()  # Remove x-axis title
+    
+  ) +
+  
+  scale_y_discrete(labels = function(x) gsub("effect", "", x))  # Remove 'Year' from y-axis labels
+
+# Update gg_DRTO
+
+gg_DRTO <- gg_DRTO + 
+  
+  theme(
+    
+    axis.text.y = element_text(size = 6),  # Adjust font size for y-axis labels
+    axis.title.y = element_blank() 
+  ) +
+  
+  scale_y_discrete(labels = function(x) gsub("effect", "", x))  # Remove 'Year' from y-axis labels
+
+# Combine the plots again after updates
+library(patchwork)
+combined_contrast_plot <- gg_SEFL / gg_FK / gg_DRTO + 
+  
+  plot_layout(ncol = 1) 
+
+# Display the combined plot
+
+print(combined_contrast_plot)
+
+ggsave("S6_JUVENILE_emmeans_contrasts_8April.jpeg", 
+      plot = combined_contrast_plot, 
+     width = 8.5,     # Width in inches
+      height = 11,     # Height in inches
+      dpi = 600,       # Resolution in dots per inch
+      units = "in")    # Specify the units for width and height
+
+```
+
+#### Optional
+Figure S7 Emmip of Density model 
+```{r}
+# Define the labels for Reg.Hab
+Reg.Hab_labels <- c(
+  `FKNMS _ OD` = "FK Deep Forereef", 
+  `FKNMS _ OS` = "FK Shallow Forereef", 
+  `FKNMS _ P` = "FK Patch", 
+  `SECREMP _ Inner` = "ECA Inner",  
+  `SECREMP _ Middle` = "ECA Middle", 
+  `SECREMP _ Nearshore` = "ECA Nearshore", 
+  `SECREMP _ Outer` = "ECA Outer",
+  `NPSDT _ OD` = "DRTO Deep", 
+  `NPSDT _ P` = "DRTO Patch",
+  `NPSDT _ PIN` = "DRTO Pinnacle"
+)
+
+# Convert Year to integer
+density_model <- Total.octo_no_2012
+# Relevel Reg.Hab factor
+density_model$Reg.Hab <- factor(
+  density_model$Reg.Hab,
+  levels = c("SECREMP _ Nearshore", "SECREMP _ Inner", "SECREMP _ Middle", "SECREMP _ Outer", 
+             "FKNMS _ P", "FKNMS _ OS", "FKNMS _ OD", 
+             "NPSDT _ P", "NPSDT _ PIN", "NPSDT _ OD"),
+  labels = Reg.Hab_labels[levels(density_model$Reg.Hab)]
+)
+
+Best<- glmmTMB(counts ~ Year * Reg.Hab+(1|SiteID/StationID) +
+                            ar1(Year-1|StationID),
+                          family = nbinom2, data = density_model)
+
+Best <- update(Best, control = glmmTMBControl(optCtrl=list(iter.max=1e3,eval.max=1e3)))
+
+
+density.plot.dat <-  emmip(Best, Reg.Hab
+      ~ Year, plotit = FALSE)
+head(density.plot.dat)
+
+
+head(density.plot.dat)
+unique(density.plot.dat$tvar)
+custom_colors <- c(
+  "#00BFFF", # FK Deep Forereef - Light Sky Blue
+  "#0008B1", # FK Shallow Forereef - Dark Turquoise
+  "#4682B4", # FK Patch - Steel Blue
+  "#90EE90", # DRTO Deep - Light Green
+  "#32CD32", # DRTO Patch - Lime Green
+  "#008000", # DRTO Pinnacle - Green
+  "#FF6347", # ECA Inner - Tomato
+  "#FF4500", # ECA Middle - Orange Red
+  "#FFD700", # ECA Nearshore - Gold
+  "#FF8C00"  # ECA Outer - Dark Orange
+)
+
+# Create a named vector to ensure correct color mapping
+color_mapping <- setNames(custom_colors, 
+                          c("FK Deep Forereef", 
+                            "FK Shallow Forereef", 
+                            "FK Patch", 
+                            "DRTO Deep", 
+                            "DRTO Patch", 
+                            "DRTO Pinnacle", 
+                            "ECA Inner", 
+                            "ECA Middle", 
+                            "ECA Nearshore", 
+                            "ECA Outer"))
+
+# Create the plot
+density_emmip <-ggplot(data = density.plot.dat, 
+       aes(x = xvar, y = yvar, group = Reg.Hab, color = Reg.Hab)) + 
+  geom_point(size = 2) + 
+  geom_line(linewidth= 1.2) + 
+  geom_errorbar(aes(ymin = yvar - SE, ymax = yvar + SE), 
+                width = 0.2, # Width of the error bar
+                position = position_dodge(0.1)) + # Adjust position for dodging if needed
+  labs(x = "Year", y = "Marginal mean", linetype = "type", shape = "type") + 
+  scale_color_manual(values = color_mapping) +  # Using color_mapping for colors
+  theme_pubclean() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    axis.title.x = element_text(face = "bold", size = 14, margin = margin(t = 10)),
+    axis.title.y = element_text(face = "bold", size = 14, margin = margin(r = 10)),
+    axis.title.y.right = element_text(color = "black", face = "bold", size = 14, margin = margin(l = 10)),
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.major.x = element_line(color = "gray80", linewidth = 0.25),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "whitesmoke", color = NA),
+    plot.title = element_blank(),
+    legend.title = element_blank(),
+    panel.spacing = unit(2, "lines")
+  )
+density_emmip
+
+#Save if needed  
+ggsave(filename = "Supp_S6_Emmip of density model_March13.jpg", plot = density_emmip, 
+       width = 14, height = 5.63, units = "in", dpi = 600)
+```
+
